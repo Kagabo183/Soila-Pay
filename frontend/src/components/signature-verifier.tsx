@@ -16,7 +16,7 @@ const SAMPLE_PAYLOAD = JSON.stringify(
     fineract_savings_account_id: "12345",
     amount_rwf: 5000,
     status: "SUCCESS",
-    utility_token: "REG-AB12CD34EF56",
+    provider_transaction_reference: "CYC-559013",
     timestamp: "2026-08-07T11:42:00Z",
   },
   null,

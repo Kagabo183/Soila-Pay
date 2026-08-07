@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     # App
     app_env: str = "local"  # local | staging | prod
     log_level: str = "INFO"
+    # Comma-separated list of origins allowed to call this API from a browser
+    # (the console frontend). Defaults cover the console's own local dev
+    # server - override for any deployed frontend origin.
+    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # Fineract
     fineract_base_url: str = "https://localhost:8443/fineract-provider/api/v1"
@@ -23,11 +27,11 @@ class Settings(BaseSettings):
     fineract_date_format: str = "dd MMMM yyyy"
     fineract_timeout_seconds: float = 15.0
 
-    # Utility provider
-    utility_provider_name: str = "ddin"  # "ddin" (real) | "dummy" (local/Bruno rollback testing)
-    utility_dummy_base_url: str = "http://dummy-utility:9000"
-    utility_timeout_seconds: float = 10.0
-    utility_dummy_latency_seconds: float = 0.2
+    # Collection provider (pulls money from a customer's mobile money account)
+    collection_provider_name: str = "ddin"  # "ddin" (real) | "dummy" (local/Bruno rollback testing)
+    collection_dummy_base_url: str = "http://dummy-collection:9000"
+    collection_timeout_seconds: float = 10.0
+    collection_dummy_latency_seconds: float = 0.2
 
     # DDIN / Moola sandbox (Auth & Accounts + Collection API)
     ddin_base_url: str = "https://agenttestapi.ddin.rw"
@@ -38,11 +42,47 @@ class Settings(BaseSettings):
     # ASSUMPTION: only the base-URL example path was provided, not the full
     # Collection API doc section - confirm this against DDIN's real docs.
     ddin_collection_path: str = "/v1/momo/collection/initiate"
+    # From DDIN's "Getting Started" docs (Auth & Accounts API) - lists float
+    # account balances. Used only by the connection diagnostics check (see
+    # app/services/ddin_diagnostics.py), not by the collection flow itself.
+    ddin_balance_path: str = "/v1/agency/accounts/all/accounts/info/balance"
     ddin_timeout_seconds: float = 15.0
+    # Shared secret DDIN issues when you register a webhook subscription (not
+    # the same as ddin_username/password) - used to verify X-Moola-Signature
+    # on incoming collection.success/collection.failed webhooks. See
+    # app/api/v1/webhooks.py.
+    ddin_webhook_secret: str = ""
 
     # Rollback retry
     refund_max_attempts: int = 5
     refund_backoff_base_seconds: float = 1.0
+
+    # Transient-failure retry for outbound DDIN calls (login/refresh/collect) -
+    # timeouts, connection errors, and 5xx only. Never retries 401/403 or
+    # other 4xx (those are handled by the refresh-and-retry-once flow, or are
+    # genuine business rejections that won't succeed on retry).
+    ddin_retry_max_attempts: int = 3
+    ddin_retry_backoff_base_seconds: float = 0.5
+
+    # Integrator self-service portal (signup/login session tokens - see
+    # app/services/integrator_auth.py). MUST be overridden in .env for any
+    # shared/production deployment - main.py warns loudly if it isn't.
+    integrator_session_secret: str = "insecure-dev-secret-change-me"
+
+    # Operator/admin auth for /api/v1/admin/* (integrator CRUD, DDIN
+    # diagnostics, revenue summary). A single shared operator credential, not
+    # a per-admin user table - deliberately simple for this stage; see the
+    # README's "Known gap" note on multi-admin support. Empty by default so
+    # admin auth FAILS CLOSED (nobody can log in) rather than failing open
+    # with a guessable default credential.
+    admin_username: str = ""
+    admin_password: str = ""
+    admin_session_secret: str = "insecure-dev-secret-change-me"
+
+    # In-memory rate limit for endpoints that make real outbound calls to
+    # DDIN (diagnostics) - per-process, not shared across replicas. See the
+    # README's "Known gap" note if this ever runs behind multiple instances.
+    ddin_diagnostics_rate_limit_per_minute: int = 10
 
     # MySQL
     mysql_host: str = "mysql"

@@ -93,7 +93,7 @@ async list(params) {
 service starts hitting `apiClient` instead. No component code changes.
 
 `collection.service.ts` and `auth.service.ts` are wired against real endpoints
-that already exist in `../app` (`POST /api/v1/utility/purchase`,
+that already exist in `../app` (`POST /api/v1/collection/collect`,
 `GET /healthz`). The rest (`clients`, `loan`, `savings`, `accounting`,
 `disbursement`, `webhook`) are shaped to match Fineract's own REST resources
 and this project's Collection API idempotency contract, ready for the

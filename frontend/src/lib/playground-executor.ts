@@ -27,9 +27,14 @@ export async function executePlaygroundRequest(
       }
       case "collection": {
         const idempotencyKey = headers["Idempotency-Key"] || headers["idempotency-key"];
-        responseBody = await collectionService.purchase(body as unknown as CollectionRequest, idempotencyKey);
+        const integratorApiKey = headers["Integrator-Key"] || headers["integrator-key"];
+        responseBody = await collectionService.collect(
+          body as unknown as CollectionRequest,
+          integratorApiKey,
+          idempotencyKey
+        );
         const parsed = responseBody as { status: string };
-        status = parsed.status === "FAILED_REFUND_ERROR" ? 500 : 200;
+        status = parsed.status === "FAILED_REFUND_ERROR" ? 500 : parsed.status === "PENDING" ? 202 : 200;
         break;
       }
       case "transaction-status": {
@@ -45,7 +50,7 @@ export async function executePlaygroundRequest(
             status: found.status,
             debit_transaction_id: found.debitTransactionId,
             refund_transaction_id: found.refundTransactionId,
-            utility_token: found.utilityToken,
+            provider_transaction_reference: found.providerTransactionReference,
             amount_rwf: found.amountRwf,
             created_at: found.createdAt,
           };

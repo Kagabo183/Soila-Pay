@@ -12,10 +12,10 @@ export interface ListDisbursementsParams {
 }
 
 /**
- * PLACEHOLDER: the FastAPI middleware only implements the collection
- * (utility purchase) flow today - see app/api/v1/utility.py. This service is
- * shaped to match that same request/response/idempotency contract so that
- * adding a real `POST /api/v1/disbursement/payout` endpoint later (debit an
+ * PLACEHOLDER: the FastAPI middleware only implements the collection flow
+ * today - see app/api/v1/collection.py. This service is shaped to match that
+ * same request/response/idempotency contract so that adding a real
+ * `POST /api/v1/disbursement/payout` endpoint later (debit an
  * operator float account, credit a recipient via MTN/Airtel/bank rail) is a
  * drop-in swap here, with zero UI changes.
  */

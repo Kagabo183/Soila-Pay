@@ -47,7 +47,20 @@ export const authService = {
       ) {
         throw new Error("Invalid username or password");
       }
-      return { user: MOCK_USER, tokens: issueMockTokens() };
+      const tokens = issueMockTokens();
+      // Best-effort: also obtain a REAL admin session token from the
+      // middleware using the same credentials, so pages that always call the
+      // real API regardless of mock mode (e.g. DDIN Diagnostics) still work.
+      // Falls back to the mock-only token if the backend is unreachable or
+      // ADMIN_USERNAME/PASSWORD doesn't match - the mock console must not
+      // depend on the backend being up.
+      try {
+        const { data } = await apiClient.post("/api/v1/admin/auth/login", payload);
+        if (data?.token) tokens.accessToken = data.token;
+      } catch {
+        // Backend down or credentials don't match ADMIN_USERNAME/PASSWORD - fine, stay mock-only.
+      }
+      return { user: MOCK_USER, tokens };
     }
     const { data } = await apiClient.post<LoginResponse>("/api/v1/auth/login", payload);
     return data;

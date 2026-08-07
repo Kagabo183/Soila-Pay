@@ -1,0 +1,175 @@
+import logging
+
+import pymysql
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import Response
+
+from app.config import settings
+from app.schemas.integrator import (
+    DocumentType,
+    IntegratorDocumentOut,
+    IntegratorLoginRequest,
+    IntegratorOut,
+    IntegratorSessionResponse,
+    IntegratorSignupRequest,
+    ProductionKycSubmitRequest,
+)
+from app.services.integrator_auth import (
+    create_session_token,
+    hash_password,
+    verify_password,
+    verify_session_token,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+MAX_DOCUMENT_SIZE_BYTES = 5 * 1024 * 1024  # 5MB - KYC docs are small PDFs/images
+ALLOWED_DOCUMENT_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
+
+
+async def _current_integrator(request: Request, authorization: str = Header(...)) -> dict:
+    """Bearer <session-token> - see app/services/integrator_auth.py. Distinct
+    from Integrator-Key (which authenticates API calls, not portal sessions)."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
+    token = authorization.removeprefix("Bearer ").strip()
+    integrator_id = verify_session_token(token, settings.integrator_session_secret)
+    if integrator_id is None:
+        raise HTTPException(status_code=401, detail="Session expired or invalid - log in again")
+
+    integrator = await request.app.state.integrator_repo.get_by_id(integrator_id)
+    if integrator is None:
+        raise HTTPException(status_code=401, detail="Account no longer exists")
+    return integrator
+
+
+@router.post("/signup", response_model=IntegratorSessionResponse, status_code=201)
+async def signup(body: IntegratorSignupRequest, request: Request):
+    """Sandbox-only signup - mirrors how DDIN itself onboarded Soila Pay: just
+    a phone number to start testing immediately. Going live requires
+    POST /production/submit and admin approval - see the README's
+    "Integrator self-service portal" section."""
+    repo = request.app.state.integrator_repo
+    try:
+        integrator = await repo.create_self_signup(
+            body.name, body.phone_number, hash_password(body.password)
+        )
+    except pymysql.err.IntegrityError as exc:
+        if exc.args and exc.args[0] == 1062:  # duplicate phone_number
+            raise HTTPException(
+                status_code=409, detail="An account with this phone number already exists"
+            ) from exc
+        raise
+
+    token = create_session_token(integrator["id"], settings.integrator_session_secret)
+    return IntegratorSessionResponse(token=token, integrator=integrator)
+
+
+@router.post("/login", response_model=IntegratorSessionResponse)
+async def login(body: IntegratorLoginRequest, request: Request):
+    repo = request.app.state.integrator_repo
+    integrator = await repo.get_by_phone_number(body.phone_number)
+    if integrator is None or not integrator.get("password_hash"):
+        raise HTTPException(status_code=401, detail="Invalid phone number or password")
+    if not verify_password(body.password, integrator["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid phone number or password")
+
+    token = create_session_token(integrator["id"], settings.integrator_session_secret)
+    return IntegratorSessionResponse(token=token, integrator=integrator)
+
+
+@router.get("/me", response_model=IntegratorOut)
+async def me(integrator: dict = Depends(_current_integrator)):
+    return integrator
+
+
+@router.post("/production/documents", response_model=IntegratorDocumentOut, status_code=201)
+async def upload_production_document(
+    request: Request,
+    document_type: DocumentType = Form(...),
+    file: UploadFile = File(...),
+    integrator: dict = Depends(_current_integrator),
+):
+    """Real file upload (not a text reference/URL) - re-uploading the same
+    document_type replaces the previous file. See the "Known simplification"
+    note in the README: stored as a DB blob, no virus scanning or S3."""
+    if file.content_type not in ALLOWED_DOCUMENT_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type {file.content_type!r} - upload a PDF, JPEG, or PNG",
+        )
+    data = await file.read()
+    if len(data) > MAX_DOCUMENT_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="File too large - max 5MB")
+    if not data:
+        raise HTTPException(status_code=400, detail="File is empty")
+
+    document_repo = request.app.state.integrator_document_repo
+    await document_repo.upsert(
+        integrator["id"],
+        document_type,
+        file.filename or f"{document_type}.dat",
+        file.content_type,
+        data,
+    )
+    doc = await document_repo.get(integrator["id"], document_type)
+    return IntegratorDocumentOut(
+        document_type=doc["document_type"],
+        file_name=doc["file_name"],
+        content_type=doc["content_type"],
+        file_size_bytes=doc["file_size_bytes"],
+        uploaded_at=doc["uploaded_at"],
+    )
+
+
+@router.get("/production/documents", response_model=list[IntegratorDocumentOut])
+async def list_production_documents(
+    request: Request, integrator: dict = Depends(_current_integrator)
+):
+    document_repo = request.app.state.integrator_document_repo
+    return await document_repo.list_metadata(integrator["id"])
+
+
+@router.get("/production/documents/{document_type}")
+async def download_own_document(
+    document_type: DocumentType, request: Request, integrator: dict = Depends(_current_integrator)
+):
+    document_repo = request.app.state.integrator_document_repo
+    doc = await document_repo.get(integrator["id"], document_type)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not uploaded yet")
+    return Response(
+        content=doc["file_data"],
+        media_type=doc["content_type"],
+        headers={"Content-Disposition": f'inline; filename="{doc["file_name"]}"'},
+    )
+
+
+@router.post("/production/submit", response_model=IntegratorOut)
+async def submit_production_kyc(
+    body: ProductionKycSubmitRequest,
+    request: Request,
+    integrator: dict = Depends(_current_integrator),
+):
+    document_repo = request.app.state.integrator_document_repo
+    if not await document_repo.has_all_required(integrator["id"]):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Upload both a tax clearance certificate and an RDB certificate "
+                "(POST /production/documents) before submitting for review"
+            ),
+        )
+    tax_doc = await document_repo.get(integrator["id"], "TAX_CLEARANCE")
+    rdb_doc = await document_repo.get(integrator["id"], "RDB_CERTIFICATE")
+
+    repo = request.app.state.integrator_repo
+    return await repo.submit_production_kyc(
+        integrator["id"],
+        business_location=body.business_location,
+        tax_clearance_file_name=tax_doc["file_name"],
+        rdb_certificate_file_name=rdb_doc["file_name"],
+        ip_whitelist=body.ip_whitelist,
+    )

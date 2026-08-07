@@ -1,35 +1,68 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1.utility import router as utility_router
+from app.api.v1.admin import router as admin_router
+from app.api.v1.admin_auth import router as admin_auth_router
+from app.api.v1.collection import router as collection_router
+from app.api.v1.ddin_diagnostics import router as ddin_diagnostics_router
+from app.api.v1.deps import require_admin
+from app.api.v1.integrator_portal import router as integrator_portal_router
+from app.api.v1.webhooks import router as webhooks_router
 from app.config import settings
 from app.db.database import close_pool, create_pool
+from app.db.ddin_diagnostics_repo import DdinDiagnosticsRepo
+from app.db.integrator_document_repo import IntegratorDocumentRepo
+from app.db.integrator_repo import IntegratorRepo
 from app.db.transaction_log_repo import TransactionLogRepo
 from app.logging_conf import configure_logging
-from app.services.fineract_client import FineractClient
-from app.services.purchase_orchestrator import PurchaseOrchestrator
-from app.services.utility_provider import get_utility_provider
+from app.services.collection_orchestrator import CollectionOrchestrator
+from app.services.collection_provider import DummyCollectionProvider, get_collection_provider
+from app.services.fineract_client import DummyFineractClient, FineractClient
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+DEFAULT_INSECURE_SECRET = "insecure-dev-secret-change-me"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     pool = await create_pool(settings)
     fineract_client = FineractClient(settings)
+    # Sandbox-key traffic never touches the real (external, not part of this
+    # repo) Fineract deployment - see DummyFineractClient's docstring.
+    sandbox_fineract_client = DummyFineractClient(settings)
     repo = TransactionLogRepo(pool)
-    utility_provider = get_utility_provider(settings)
+    integrator_repo = IntegratorRepo(pool)
+    integrator_document_repo = IntegratorDocumentRepo(pool)
+    collection_provider = get_collection_provider(settings)
+    # Sandbox-key traffic always runs against the dummy provider, regardless
+    # of COLLECTION_PROVIDER_NAME, so integrators can safely test the full
+    # debit -> collect -> refund flow before earning a production key - see
+    # app/api/v1/collection.py's key_mode routing.
+    sandbox_collection_provider = DummyCollectionProvider(settings)
 
     app.state.db_pool = pool
-    app.state.orchestrator = PurchaseOrchestrator(
+    app.state.integrator_repo = integrator_repo
+    app.state.integrator_document_repo = integrator_document_repo
+    app.state.ddin_diagnostics_repo = DdinDiagnosticsRepo(pool)
+    app.state.orchestrator = CollectionOrchestrator(
         settings=settings,
         repo=repo,
         fineract=fineract_client,
-        utility_provider=utility_provider,
+        collection_provider=collection_provider,
+        integrator_repo=integrator_repo,
+    )
+    app.state.sandbox_orchestrator = CollectionOrchestrator(
+        settings=settings,
+        repo=repo,
+        fineract=sandbox_fineract_client,
+        collection_provider=sandbox_collection_provider,
+        integrator_repo=integrator_repo,
     )
 
     if settings.app_env == "prod" and not settings.fineract_ssl_verify:
@@ -38,20 +71,62 @@ async def lifespan(app: FastAPI):
             "certificate validation is disabled. This should only be true for a "
             "local self-signed Fineract instance."
         )
+    if settings.app_env == "prod" and settings.integrator_session_secret == DEFAULT_INSECURE_SECRET:
+        logger.warning(
+            "INTEGRATOR_SESSION_SECRET is unset while APP_ENV=prod - integrator "
+            "portal session tokens are signed with a publicly-known default "
+            "secret. Set a real secret before allowing real signups."
+        )
+    if not settings.admin_username or not settings.admin_password:
+        logger.warning(
+            "ADMIN_USERNAME / ADMIN_PASSWORD are not set - /api/v1/admin/* is "
+            "reachable but no one can log in (admin auth fails closed, not "
+            "open). Set both in .env to use the admin console / DDIN diagnostics."
+        )
+    if settings.app_env == "prod" and settings.admin_session_secret == DEFAULT_INSECURE_SECRET:
+        logger.warning(
+            "ADMIN_SESSION_SECRET is unset while APP_ENV=prod - admin session "
+            "tokens are signed with a publicly-known default secret. Set a "
+            "real secret before relying on admin auth in production."
+        )
 
     logger.info("startup_complete", extra={"app_env": settings.app_env})
     try:
         yield
     finally:
         await fineract_client.aclose()
-        await utility_provider.aclose()
+        await sandbox_fineract_client.aclose()
+        await collection_provider.aclose()
+        await sandbox_collection_provider.aclose()
         await close_pool(pool)
         logger.info("shutdown_complete")
 
 
-app = FastAPI(title="Soila Pay - Utility Purchase Middleware", lifespan=lifespan)
+app = FastAPI(title="Soila Pay - Collection Middleware", lifespan=lifespan)
 
-app.include_router(utility_router, prefix="/api/v1/utility", tags=["utility"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in settings.cors_allowed_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(collection_router, prefix="/api/v1/collection", tags=["collection"])
+app.include_router(admin_auth_router, prefix="/api/v1/admin/auth", tags=["admin-auth"])
+app.include_router(
+    admin_router, prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin)]
+)
+app.include_router(webhooks_router, prefix="/api/v1/webhooks", tags=["webhooks"])
+app.include_router(
+    integrator_portal_router, prefix="/api/v1/integrator-portal", tags=["integrator-portal"]
+)
+app.include_router(
+    ddin_diagnostics_router,
+    prefix="/api/v1/admin/ddin",
+    tags=["ddin-diagnostics"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 @app.get("/healthz")

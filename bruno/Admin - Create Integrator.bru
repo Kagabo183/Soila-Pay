@@ -1,0 +1,37 @@
+meta {
+  name: Admin - Create Integrator
+  type: http
+  seq: 0
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/integrators
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{adminToken}}
+}
+
+body:json {
+  {
+    "name": "Acme Aggregator",
+    "fee_percentage": 2.20
+  }
+}
+
+script:post-response {
+  // Copy the returned sandbox_api_key into {{integratorKey}} so the
+  // Collection requests below can use it immediately without manual
+  // copy-pasting. Run "Admin - Login" first to populate {{adminToken}}.
+  const key = res.body.sandbox_api_key;
+  if (key) {
+    bru.setVar("integratorKey", key);
+  }
+}
+
+assert {
+  res.status: eq 201
+}

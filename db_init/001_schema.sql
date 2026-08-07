@@ -8,29 +8,32 @@ CREATE DATABASE IF NOT EXISTS soila_pay CHARACTER SET utf8mb4;
 USE soila_pay;
 
 CREATE TABLE IF NOT EXISTS transaction_logs (
-    id                           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    idempotency_key              VARCHAR(191) NOT NULL,
-    fineract_savings_account_id  VARCHAR(64) NOT NULL,
-    utility_provider             VARCHAR(32) NOT NULL,
-    meter_number                 VARCHAR(32) NOT NULL,
-    amount_rwf                   DECIMAL(18, 2) NOT NULL,
-    status                       ENUM(
-                                      'PENDING',
-                                      'DEBITED',
-                                      'SUCCESS',
-                                      'FAILED_REFUNDED',
-                                      'FAILED_REFUND_ERROR'
-                                  ) NOT NULL DEFAULT 'PENDING',
-    fineract_debit_txn_id        VARCHAR(64) NULL,
-    fineract_refund_txn_id       VARCHAR(64) NULL,
-    utility_token                VARCHAR(255) NULL,
-    error_detail                 TEXT NULL,
-    refund_attempts              INT UNSIGNED NOT NULL DEFAULT 0,
-    request_payload              JSON NULL,
-    response_payload             JSON NULL,
-    created_at                   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at                   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-                                  ON UPDATE CURRENT_TIMESTAMP(3),
+    id                              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idempotency_key                 VARCHAR(191) NOT NULL,
+    fineract_savings_account_id     VARCHAR(64) NOT NULL,
+    -- Mobile money network the collection runs through (e.g. "MTN", "AIRTEL") -
+    -- this is a MoMo collection ledger, not a utility-vending one.
+    provider                        VARCHAR(32) NOT NULL,
+    customer_account_number         VARCHAR(32) NOT NULL,
+    customer_name                   VARCHAR(191) NOT NULL DEFAULT '',
+    amount_rwf                      DECIMAL(18, 2) NOT NULL,
+    status                          ENUM(
+                                         'PENDING',
+                                         'DEBITED',
+                                         'SUCCESS',
+                                         'FAILED_REFUNDED',
+                                         'FAILED_REFUND_ERROR'
+                                     ) NOT NULL DEFAULT 'PENDING',
+    fineract_debit_txn_id           VARCHAR(64) NULL,
+    fineract_refund_txn_id          VARCHAR(64) NULL,
+    provider_transaction_reference  VARCHAR(255) NULL,
+    error_detail                    TEXT NULL,
+    refund_attempts                 INT UNSIGNED NOT NULL DEFAULT 0,
+    request_payload                 JSON NULL,
+    response_payload                JSON NULL,
+    created_at                      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at                      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+                                     ON UPDATE CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_idempotency_key (idempotency_key),
     KEY idx_status (status),
     KEY idx_savings_account (fineract_savings_account_id),

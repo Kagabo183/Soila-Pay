@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Zap, Lock, User as UserIcon, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -83,6 +84,13 @@ export default function LoginPage() {
             </Button>
           </form>
         </Card>
+
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          Are you an integrator, not Soila Pay staff?{" "}
+          <Link href="/portal/login" className="font-medium text-primary hover:underline">
+            Go to the Integrator Portal
+          </Link>
+        </p>
 
         <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-card px-3 py-2.5 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />

@@ -10,6 +10,8 @@ import type {
   WebhookSubscription,
   WebhookDelivery,
   Provider,
+  Integrator,
+  IntegratorSummary,
 } from "@/types/api";
 
 const FIRST_NAMES = [
@@ -28,7 +30,7 @@ const GL_ACCOUNTS = [
   { code: "10201", name: "Loan Portfolio - Principal" },
   { code: "20101", name: "Savings Deposits" },
   { code: "40101", name: "Interest Income - Loans" },
-  { code: "50201", name: "Utility Collection Suspense" },
+  { code: "50201", name: "Mobile Money Collection Suspense" },
 ];
 
 const rand = seededRandom(42);
@@ -147,22 +149,25 @@ export function generateCollections(count = 60): CollectionTransaction[] {
   const statuses: CollectionTransaction["status"][] = [
     "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "FAILED_REFUNDED", "FAILED_REFUND_ERROR", "PENDING",
   ];
-  const providers = ["REG", "REG", "WASAC"];
+  const providers = ["MTN", "MTN", "AIRTEL"];
   const channels: CollectionTransaction["channel"][] = ["MTN", "AIRTEL", "BANK"];
   return Array.from({ length: count }, (_, i) => {
     const status = pick(statuses);
     const amount = randomInt(1, 30) * 1000;
+    const provider = pick(providers);
     return {
       id: mockId("COL", i + 1),
       idempotencyKey: `idem-${mockId("", i + 1)}-${randomInt(1000, 9999)}`,
       fineractSavingsAccountId: `4000${String(300000 + randomInt(0, 40))}`,
-      utilityProvider: pick(providers),
-      meterNumber: `${randomInt(10000000000, 99999999999)}`,
+      provider,
+      customerAccountNumber: randomMsisdn(pick(["8", "9"])),
+      customerName: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`,
       amountRwf: amount,
       status,
       debitTransactionId: status === "PENDING" ? null : mockId("DBT", i + 1),
       refundTransactionId: status.startsWith("FAILED") ? mockId("RFD", i + 1) : null,
-      utilityToken: status === "SUCCESS" ? `${pick(providers)}-${randomInt(100000, 999999)}` : null,
+      providerTransactionReference:
+        status === "SUCCESS" ? `${provider}-${randomInt(100000, 999999)}` : null,
       channel: pick(channels),
       createdAt: daysAgo(randomInt(0, 14)),
     };
@@ -272,6 +277,68 @@ export function generateProviders(): Provider[] {
       disbursementsToday: randomInt(15, 40),
     },
   ];
+}
+
+const INTEGRATOR_NAMES = [
+  "Kigali Retail Traders",
+  "Umurava Fintech Ltd",
+  "Rwanda Agri Collect",
+  "Byiringiro Enterprises",
+];
+
+// DDIN's cost to us, mirrored from the default seeded in
+// db_init/002_integrators_and_fees.sql (platform_settings.ddin_cost_percentage).
+export const MOCK_DDIN_COST_PERCENTAGE = 2.0;
+
+export function generateIntegrators(count = 4): Integrator[] {
+  const productionStatuses: Integrator["productionStatus"][] = [
+    "APPROVED", "PENDING_REVIEW", "NOT_SUBMITTED", "REJECTED",
+  ];
+  return Array.from({ length: count }, (_, i) => {
+    const productionStatus = productionStatuses[i] ?? "NOT_SUBMITTED";
+    const approved = productionStatus === "APPROVED";
+    return {
+      id: i + 1,
+      name: INTEGRATOR_NAMES[i] ?? `Integrator ${i + 1}`,
+      sandboxApiKey: `sk_${mockId("mock", i + 1).replace(/-/g, "")}${String(randomInt(100000, 999999))}`,
+      productionApiKey: approved
+        ? `sk_live_${mockId("mock", i + 1).replace(/-/g, "")}${String(randomInt(100000, 999999))}`
+        : null,
+      productionStatus,
+      productionRejectionReason: productionStatus === "REJECTED" ? "RDB certificate expired" : null,
+      phoneNumber: randomMsisdn(pick(["8", "9"])),
+      businessLocation: productionStatus === "NOT_SUBMITTED" ? null : "Kigali, Nyarugenge",
+      taxClearanceReference: productionStatus === "NOT_SUBMITTED" ? null : `TAX-${randomInt(100000, 999999)}`,
+      rdbCertificateReference: productionStatus === "NOT_SUBMITTED" ? null : `RDB-${randomInt(100000, 999999)}`,
+      ipWhitelist: null,
+      // "2.20 for start" - matches app/schemas/integrator.py's IntegratorCreate default.
+      feePercentage: i === 0 ? 2.2 : Number((2.0 + rand() * 1.2).toFixed(2)),
+      isActive: i !== count - 1,
+      createdAt: daysAgo(randomInt(30, 400)),
+      updatedAt: daysAgo(randomInt(0, 29)),
+    };
+  });
+}
+
+export function generateIntegratorSummaries(integrators: Integrator[]): IntegratorSummary[] {
+  return integrators.map((integrator) => {
+    const successfulTransactions = randomInt(40, 900);
+    const totalCollectedRwf = successfulTransactions * randomInt(3000, 15000);
+    const totalFeeChargedRwf = Math.round((totalCollectedRwf * integrator.feePercentage) / 100);
+    const totalDdinCostRwf = Math.round(
+      (totalCollectedRwf * MOCK_DDIN_COST_PERCENTAGE) / 100
+    );
+    return {
+      integratorId: integrator.id,
+      integratorName: integrator.name,
+      currentFeePercentage: integrator.feePercentage,
+      successfulTransactions,
+      totalCollectedRwf,
+      totalFeeChargedRwf,
+      totalDdinCostRwf,
+      totalMarginRwf: totalFeeChargedRwf - totalDdinCostRwf,
+    };
+  });
 }
 
 export function generateDailySeries(days = 14) {

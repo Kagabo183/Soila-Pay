@@ -7,6 +7,9 @@ import {
   Terminal,
   BookOpen,
   Settings,
+  Users,
+  Radio,
+  Send,
   Zap,
   ChevronsLeft,
   ChevronsRight,
@@ -28,7 +31,12 @@ const NAV_SECTIONS = [
   },
   {
     label: "Configuration",
-    items: [{ href: "/settings/api", label: "API Integration", icon: Settings }],
+    items: [
+      { href: "/settings/api", label: "API Integration", icon: Settings },
+      { href: "/settings/integrators", label: "Integrators & Margin", icon: Users },
+      { href: "/settings/test-collection", label: "Test Collection", icon: Send },
+      { href: "/settings/ddin-diagnostics", label: "DDIN Diagnostics", icon: Radio },
+    ],
   },
 ];
 

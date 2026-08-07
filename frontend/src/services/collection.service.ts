@@ -23,17 +23,21 @@ function generateIdempotencyKey() {
 
 export const collectionService = {
   /**
-   * POST /api/v1/utility/purchase - the real endpoint implemented in
-   * app/api/v1/utility.py. Requires an Idempotency-Key header; auto-generated
-   * here if the caller doesn't supply one.
+   * POST /api/v1/collection/collect - the real endpoint implemented in
+   * app/api/v1/collection.py. Requires Idempotency-Key (auto-generated here if
+   * the caller doesn't supply one) and Integrator-Key headers. integratorApiKey
+   * is optional only because mock mode never reaches the network - a real,
+   * non-mock call without it is rejected by the backend with 401 Unknown
+   * Integrator-Key, exactly like calling the real API without a key would be.
    */
-  async purchase(
+  async collect(
     payload: CollectionRequest,
+    integratorApiKey?: string,
     idempotencyKey: string = generateIdempotencyKey()
   ): Promise<CollectionResponse> {
     if (MOCK_MODE) {
       await simulateLatency(500, 1200);
-      const forcedFailure = payload.meter_number === "00000000000";
+      const forcedFailure = payload.customer_account_number === "00000000000";
       if (forcedFailure) {
         return {
           status: "FAILED_REFUNDED",
@@ -41,9 +45,9 @@ export const collectionService = {
           fineract_savings_account_id: payload.fineract_savings_account_id,
           debit_transaction_id: `DBT-${Date.now()}`,
           refund_transaction_id: `RFD-${Date.now()}`,
-          utility_token: null,
+          provider_transaction_reference: null,
           amount_rwf: payload.amount_rwf,
-          message: `Utility purchase failed (provider ${payload.utility_provider} rejected meter ${payload.meter_number}). Funds were refunded successfully.`,
+          message: `Collection failed (provider ${payload.provider} rejected account ${payload.customer_account_number}). Funds were refunded successfully.`,
           refunded: true,
         };
       }
@@ -53,14 +57,17 @@ export const collectionService = {
         fineract_savings_account_id: payload.fineract_savings_account_id,
         debit_transaction_id: `DBT-${Date.now()}`,
         refund_transaction_id: null,
-        utility_token: `${payload.utility_provider}-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+        provider_transaction_reference: `${payload.provider}-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
         amount_rwf: payload.amount_rwf,
-        message: "Purchase completed successfully",
+        message: "Collection completed successfully",
         refunded: false,
       };
     }
-    const { data } = await apiClient.post<CollectionResponse>("/api/v1/utility/purchase", payload, {
-      headers: { "Idempotency-Key": idempotencyKey },
+    const { data } = await apiClient.post<CollectionResponse>("/api/v1/collection/collect", payload, {
+      headers: {
+        "Idempotency-Key": idempotencyKey,
+        ...(integratorApiKey ? { "Integrator-Key": integratorApiKey } : {}),
+      },
     });
     return data;
   },
@@ -75,7 +82,7 @@ export const collectionService = {
       return paginate(filtered, page, pageSize);
     }
     const { data } = await apiClient.get<PaginatedResult<CollectionTransaction>>(
-      "/api/v1/utility/transactions",
+      "/api/v1/collection/transactions",
       { params }
     );
     return data;

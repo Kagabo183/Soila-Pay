@@ -1,0 +1,35 @@
+meta {
+  name: Admin - Login
+  type: http
+  seq: -1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "username": "{{adminUsername}}",
+    "password": "{{adminPassword}}"
+  }
+}
+
+script:post-response {
+  // Every other Admin - * request in this collection sends
+  // Authorization: Bearer {{adminToken}} - run this first.
+  const token = res.body.token;
+  if (token) {
+    bru.setVar("adminToken", token);
+  }
+}
+
+assert {
+  res.status: eq 200
+}

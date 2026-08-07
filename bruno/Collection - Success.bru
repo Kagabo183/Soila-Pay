@@ -1,11 +1,11 @@
 meta {
-  name: Purchase - Success
+  name: Collection - Success
   type: http
   seq: 1
 }
 
 post {
-  url: {{baseUrl}}/api/v1/utility/purchase
+  url: {{baseUrl}}/api/v1/collection/collect
   body: json
   auth: none
 }
@@ -13,19 +13,21 @@ post {
 headers {
   Content-Type: application/json
   Idempotency-Key: {{idempotencyKey}}
+  Integrator-Key: {{integratorKey}}
 }
 
 body:json {
   {
     "fineract_savings_account_id": "{{savingsAccountId}}",
-    "utility_provider": "REG",
-    "meter_number": "04212345678",
+    "provider": "MTN",
+    "customer_account_number": "0788123456",
+    "customer_name": "Jean Uwimana",
     "amount_rwf": 5000
   }
 }
 
 script:pre-request {
-  // Fresh key each run so this exercises the debit+purchase path rather than
+  // Fresh key each run so this exercises the debit+collect path rather than
   // replaying a cached idempotent result. Re-send the request unmodified (same
   // key) to instead test the idempotency replay behavior.
   bru.setVar("idempotencyKey", "success-" + Date.now());

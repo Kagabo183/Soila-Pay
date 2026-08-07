@@ -35,10 +35,12 @@ class TransactionLogRepo:
         self,
         idempotency_key: str,
         fineract_savings_account_id: str,
-        utility_provider: str,
-        meter_number: str,
+        provider: str,
+        customer_account_number: str,
+        customer_name: str,
         amount_rwf: Decimal,
         request_payload: dict[str, Any],
+        integrator_id: Optional[int] = None,
     ) -> bool:
         """Returns True if this call created the row, False if the key already exists
         (a concurrent duplicate request lost the race - caller should re-fetch)."""
@@ -48,15 +50,18 @@ class TransactionLogRepo:
                     await cur.execute(
                         """
                         INSERT INTO transaction_logs
-                            (idempotency_key, fineract_savings_account_id, utility_provider,
-                             meter_number, amount_rwf, status, request_payload)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            (idempotency_key, fineract_savings_account_id, integrator_id,
+                             provider, customer_account_number, customer_name, amount_rwf,
+                             status, request_payload)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             idempotency_key,
                             fineract_savings_account_id,
-                            utility_provider,
-                            meter_number,
+                            integrator_id,
+                            provider,
+                            customer_account_number,
+                            customer_name,
                             str(amount_rwf),
                             STATUS_PENDING,
                             json.dumps(request_payload),
@@ -75,14 +80,46 @@ class TransactionLogRepo:
             fineract_debit_txn_id=debit_txn_id,
         )
 
+    async def mark_provider_pending(
+        self, idempotency_key: str, operation_reference_id: Optional[str]
+    ) -> None:
+        """Row stays at DEBITED - this only records DDIN's operationReferenceId
+        for tracing until the collection.success/failed webhook resolves it."""
+        await self._update(
+            idempotency_key,
+            provider_operation_reference_id=operation_reference_id,
+        )
+
     async def mark_success(
-        self, idempotency_key: str, utility_token: str, response_payload: dict[str, Any]
+        self,
+        idempotency_key: str,
+        provider_transaction_reference: str,
+        response_payload: dict[str, Any],
+        *,
+        integrator_fee_percentage: Optional[Decimal] = None,
+        ddin_cost_percentage: Optional[Decimal] = None,
+        fee_amount_rwf: Optional[Decimal] = None,
+        ddin_cost_amount_rwf: Optional[Decimal] = None,
+        margin_amount_rwf: Optional[Decimal] = None,
     ) -> None:
         await self._update(
             idempotency_key,
             status=STATUS_SUCCESS,
-            utility_token=utility_token,
+            provider_transaction_reference=provider_transaction_reference,
             response_payload=json.dumps(response_payload),
+            integrator_fee_percentage=(
+                str(integrator_fee_percentage) if integrator_fee_percentage is not None else None
+            ),
+            ddin_cost_percentage=(
+                str(ddin_cost_percentage) if ddin_cost_percentage is not None else None
+            ),
+            fee_amount_rwf=str(fee_amount_rwf) if fee_amount_rwf is not None else None,
+            ddin_cost_amount_rwf=(
+                str(ddin_cost_amount_rwf) if ddin_cost_amount_rwf is not None else None
+            ),
+            margin_amount_rwf=(
+                str(margin_amount_rwf) if margin_amount_rwf is not None else None
+            ),
         )
 
     async def mark_failed_refunded(

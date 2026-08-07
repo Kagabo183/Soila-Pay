@@ -7,83 +7,89 @@ from decimal import Decimal
 from typing import Optional
 
 import httpx
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import Settings
-from app.exceptions import UtilityPurchaseError
+from app.exceptions import CollectionError, CollectionPending
 
 logger = logging.getLogger(__name__)
 
 
-class UtilityProvider(ABC):
+class CollectionProvider(ABC):
     @abstractmethod
-    async def purchase(
+    async def collect(
         self,
         provider: str,
-        meter_number: str,
+        customer_account_number: str,
         amount: Decimal,
         *,
         reference_id: Optional[str] = None,
         customer_name: Optional[str] = None,
     ) -> str:
-        """Returns a utility token string on success; raises UtilityPurchaseError on failure.
+        """Returns a provider transaction reference string on success; raises
+        CollectionError on failure.
 
         reference_id: caller's idempotency key, forwarded as-is where a provider
         needs one (e.g. DDIN's required `referenceId`). Providers that don't
         need it may ignore it.
         customer_name: forwarded where a provider requires it (e.g. DDIN's
-        required `customerName`). See DDINUtilityProvider's docstring for the
-        current gap: nothing upstream of this call yet supplies a real value.
+        required `customerName`).
         """
 
     async def aclose(self) -> None:
         """Override if the provider owns a resource (e.g. an httpx.AsyncClient) to release."""
 
 
-class DummyUtilityProvider(UtilityProvider):
+class DummyCollectionProvider(CollectionProvider):
     """
-    Local stand-in for a real utility provider integration.
+    Local stand-in for a real collection provider integration.
 
     Simulates the call in-process (latency only, no second container required).
-    Use `FORCE_FAIL_METER` as the meter number to deliberately trigger a failure and
-    exercise the rollback path - this is what the Bruno "Forced Utility Failure"
-    request uses, and it's the only reliable way to test the refund path without
-    depending on DDIN's sandbox rejecting a specific meter number on demand.
+    Use `FORCE_FAIL_ACCOUNT_NUMBER` as the customer account number to
+    deliberately trigger a failure and exercise the rollback path - this is
+    what the Bruno "Forced Failure" request uses, and it's the only reliable
+    way to test the refund path without depending on DDIN's sandbox rejecting
+    a specific account number on demand.
 
-    Selected via UTILITY_PROVIDER_NAME=dummy (see get_utility_provider below).
+    Selected via COLLECTION_PROVIDER_NAME=dummy (see get_collection_provider below).
     """
 
-    FORCE_FAIL_METER = "00000000000"
+    FORCE_FAIL_ACCOUNT_NUMBER = "00000000000"
 
     def __init__(self, settings: Settings):
         self._settings = settings
 
-    async def purchase(
+    async def collect(
         self,
         provider: str,
-        meter_number: str,
+        customer_account_number: str,
         amount: Decimal,
         *,
         reference_id: Optional[str] = None,
         customer_name: Optional[str] = None,
     ) -> str:
-        await asyncio.sleep(self._settings.utility_dummy_latency_seconds)
+        await asyncio.sleep(self._settings.collection_dummy_latency_seconds)
 
-        if meter_number == self.FORCE_FAIL_METER:
+        if customer_account_number == self.FORCE_FAIL_ACCOUNT_NUMBER:
             logger.warning(
-                "utility_purchase_forced_failure",
-                extra={"provider": provider, "meter_number": meter_number},
+                "collection_forced_failure",
+                extra={"provider": provider, "customer_account_number": customer_account_number},
             )
-            raise UtilityPurchaseError(
-                f"Utility provider {provider} rejected meter {meter_number} "
+            raise CollectionError(
+                f"Collection provider {provider} rejected account {customer_account_number} "
                 "(forced failure for testing)"
             )
 
-        token = f"{provider}-{uuid.uuid4().hex[:12].upper()}"
+        reference = f"{provider}-{uuid.uuid4().hex[:12].upper()}"
         logger.info(
-            "utility_purchase_success",
-            extra={"provider": provider, "meter_number": meter_number, "token": token},
+            "collection_success",
+            extra={
+                "provider": provider,
+                "customer_account_number": customer_account_number,
+                "reference": reference,
+            },
         )
-        return token
+        return reference
 
 
 class _DDINUnauthorizedError(Exception):
@@ -92,6 +98,13 @@ class _DDINUnauthorizedError(Exception):
 
 class _DDINRefreshError(Exception):
     """Internal signal: refreshing the session failed and a full re-login is required."""
+
+
+class _DDINTransientServerError(Exception):
+    """Internal signal: DDIN returned a 5xx, worth retrying. Never escapes
+    _request_with_retry - either a later attempt succeeds, or retries are
+    exhausted and the last (still-5xx) httpx.Response is returned normally,
+    so every existing caller's status-code handling is unaffected."""
 
 
 @dataclass
@@ -104,7 +117,7 @@ class _DDINTokenState:
     version: int = 0
 
 
-class DDINUtilityProvider(UtilityProvider):
+class DDINCollectionProvider(CollectionProvider):
     """
     Real integration with the DDIN/Moola sandbox Agent API.
 
@@ -122,41 +135,32 @@ class DDINUtilityProvider(UtilityProvider):
       - Request fields (via a validation-error probe): `provider`,
         `customerAccountNumber`, `customerName`, `amount`, `referenceId`.
       - `provider` accepts the mobile money NETWORK (confirmed "MTN" is
-        accepted) - not a utility company code like "REG"/"WASAC". This is a
-        MoMo (mobile money) collection API, not a utility-vending API.
+        accepted). This is purely a MoMo (mobile money) collection API - Soila
+        Pay does not model utility vending (electricity/water tokens) at all;
+        it only pulls money from a customer's mobile money account into a
+        Fineract savings account.
       - THE API IS ASYNCHRONOUS. A real test call returned HTTP 202 with
         {"data": {"status": "pending", "transactionId": null,
         "operationReferenceId": "..."}} - DDIN acknowledges the request and
-        resolves the actual outcome later, not in this response. This is a
-        BLOCKING ARCHITECTURAL GAP, not a minor detail:
-          1. Neither a status-polling endpoint nor a webhook payload/signature
-             scheme has been confirmed yet (their own docs hint at a webhook
-             - "notified the instant a transaction resolves, instead of
-             polling" - but the registration endpoint and payload shape are
-             still needed from DDIN).
-          2. `_dispatch_collection` currently treats any non-success `status`
-             (including "pending") as a hard failure, which triggers the
-             Fineract refund rollback immediately. This is a deliberately
-             chosen SAFE STOPGAP (never claim success DDIN hasn't confirmed),
-             NOT a correct final design - it means every real collection
-             attempt will currently be refunded even when the underlying
-             MoMo collection might have gone on to succeed.
-          3. The real fix needs either: (a) poll a status endpoint in a retry
-             loop with a timeout before deciding success/failure, or
-             (b) redesign the purchase flow to be genuinely async - return a
-             PENDING state to the client immediately and resolve it later via
-             DDIN's webhook, updating transaction_logs and only refunding
-             once DDIN confirms failure. Needs DDIN's answer on which
-             mechanism they actually offer before choosing.
+        resolves the actual outcome later, not in this response.
+      - RESOLVED (2026-08-07): DDIN's webhook payload/signature scheme is now
+        documented - `collection.success` / `collection.failed` events,
+        HMAC-SHA256-signed (`X-Moola-Signature` over the raw body), correlated
+        back to our request via `data.referenceId` (== the `reference_id` we
+        send as `referenceId` above, which the orchestrator sets to our
+        `idempotency_key`). `_dispatch_collection` raises `CollectionPending`
+        (not `CollectionError`) on a "pending" status, so a real collection is
+        no longer wrongly refunded while still in flight.
+        `CollectionOrchestrator.resolve_provider_success` /
+        `resolve_provider_failure` (invoked from `app/api/v1/webhooks.py`)
+        resolve the transaction later - success is recorded, or the same
+        Fineract refund rollback runs, once DDIN actually confirms which one
+        happened. Registering our callback URL with DDIN to receive these
+        webhooks needs its own endpoint, which is not yet documented to us -
+        see the README's "Webhooks" section.
 
-    KNOWN GAP: `customerName` is required by DDIN but nothing upstream of
-    this call (UtilityPurchaseRequest / PurchaseOrchestrator) currently
-    captures a customer name - it falls back to a placeholder here. Wire a
-    real value through (e.g. fetched from the Fineract client record) before
-    relying on this beyond sandbox smoke-testing.
-
-    Selected via UTILITY_PROVIDER_NAME=ddin (the default - see
-    get_utility_provider below).
+    Selected via COLLECTION_PROVIDER_NAME=ddin (the default - see
+    get_collection_provider below).
     """
 
     def __init__(self, settings: Settings):
@@ -166,7 +170,7 @@ class DDINUtilityProvider(UtilityProvider):
             timeout=settings.ddin_timeout_seconds,
         )
         self._token_state = _DDINTokenState()
-        # Guards login/refresh so concurrent purchase() calls don't stampede
+        # Guards login/refresh so concurrent collect() calls don't stampede
         # DDIN's auth endpoints (each refresh invalidates the prior refresh
         # token, per DDIN's own docs, so concurrent refreshes can race).
         self._auth_lock = asyncio.Lock()
@@ -174,17 +178,55 @@ class DDINUtilityProvider(UtilityProvider):
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def purchase(
+    async def _request_with_retry(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """Retries transient failures (timeouts, connection errors, DDIN 5xx)
+        with exponential backoff before giving up - never a 401/403 or other
+        4xx, which are genuine outcomes, not transient failures, and are
+        handled by the caller exactly as before (raise_for_status/is_error/
+        status_code checks all still see a normal httpx.Response - even a
+        5xx one if retries were exhausted - since this never converts a
+        response into a different exception type)."""
+        attempts = 0
+        last_response: Optional[httpx.Response] = None
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(self._settings.ddin_retry_max_attempts),
+                wait=wait_exponential(
+                    multiplier=self._settings.ddin_retry_backoff_base_seconds, min=0.1, max=10
+                ),
+                retry=retry_if_exception_type(
+                    (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, _DDINTransientServerError)
+                ),
+                reraise=True,
+            ):
+                with attempt:
+                    attempts += 1
+                    resp = await self._client.request(method, path, **kwargs)
+                    last_response = resp
+                    if resp.status_code >= 500:
+                        if attempts > 1:
+                            logger.warning(
+                                "ddin_transient_5xx_retry",
+                                extra={"path": path, "attempt": attempts, "status_code": resp.status_code},
+                            )
+                        raise _DDINTransientServerError()
+        except _DDINTransientServerError:
+            pass  # exhausted retries on a persistent 5xx - fall through and return it as-is
+
+        assert last_response is not None
+        if attempts > 1 and last_response.status_code < 500:
+            logger.info("ddin_request_succeeded_after_retry", extra={"path": path, "attempts": attempts})
+        return last_response
+
+    async def collect(
         self,
         provider: str,
-        meter_number: str,
+        customer_account_number: str,
         amount: Decimal,
         *,
         reference_id: Optional[str] = None,
         customer_name: Optional[str] = None,
     ) -> str:
-        # See the KNOWN GAP note in the class docstring - customer_name has no
-        # real upstream source yet.
         reference_id = reference_id or f"soila-{uuid.uuid4().hex[:20]}"
         customer_name = customer_name or "Soila Pay Customer"
 
@@ -194,20 +236,20 @@ class DDINUtilityProvider(UtilityProvider):
         token_version = self._token_state.version
         try:
             return await self._dispatch_collection(
-                provider, meter_number, amount, reference_id, customer_name
+                provider, customer_account_number, amount, reference_id, customer_name
             )
         except _DDINUnauthorizedError:
             logger.warning(
                 "ddin_unauthorized_retry",
-                extra={"provider": provider, "meter_number": meter_number},
+                extra={"provider": provider, "customer_account_number": customer_account_number},
             )
             await self._renew_session(seen_version=token_version)
             try:
                 return await self._dispatch_collection(
-                    provider, meter_number, amount, reference_id, customer_name
+                    provider, customer_account_number, amount, reference_id, customer_name
                 )
             except _DDINUnauthorizedError as exc:
-                raise UtilityPurchaseError(
+                raise CollectionError(
                     "DDIN rejected the request with 401 even after refreshing "
                     "credentials and retrying once"
                 ) from exc
@@ -236,11 +278,12 @@ class DDINUtilityProvider(UtilityProvider):
 
     async def _login(self) -> None:
         if not self._settings.ddin_username or not self._settings.ddin_password:
-            raise UtilityPurchaseError(
+            raise CollectionError(
                 "DDIN_USERNAME / DDIN_PASSWORD are not configured"
             )
         try:
-            resp = await self._client.post(
+            resp = await self._request_with_retry(
+                "POST",
                 self._settings.ddin_login_path,
                 json={
                     "username": self._settings.ddin_username,
@@ -249,13 +292,13 @@ class DDINUtilityProvider(UtilityProvider):
             )
             resp.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise UtilityPurchaseError(f"DDIN login timed out: {exc}") from exc
+            raise CollectionError(f"DDIN login timed out: {exc}") from exc
         except httpx.HTTPStatusError as exc:
-            raise UtilityPurchaseError(
+            raise CollectionError(
                 f"DDIN login failed ({exc.response.status_code}): {exc.response.text}"
             ) from exc
         except httpx.HTTPError as exc:
-            raise UtilityPurchaseError(f"DDIN login transport error: {exc}") from exc
+            raise CollectionError(f"DDIN login transport error: {exc}") from exc
 
         self._store_tokens(resp, context="login")
         logger.info("ddin_login_succeeded")
@@ -264,7 +307,8 @@ class DDINUtilityProvider(UtilityProvider):
         if not self._token_state.refresh_token:
             raise _DDINRefreshError("no refresh token available")
         try:
-            resp = await self._client.post(
+            resp = await self._request_with_retry(
+                "POST",
                 self._settings.ddin_refresh_path,
                 json={"refreshToken": self._token_state.refresh_token},
             )
@@ -285,7 +329,7 @@ class DDINUtilityProvider(UtilityProvider):
         try:
             data = resp.json()
         except ValueError as exc:
-            raise UtilityPurchaseError(
+            raise CollectionError(
                 f"DDIN {context} response was not valid JSON: {resp.text}"
             ) from exc
 
@@ -295,7 +339,7 @@ class DDINUtilityProvider(UtilityProvider):
         access_token = envelope.get("accessToken") or envelope.get("access_token")
         refresh_token = envelope.get("refreshToken") or envelope.get("refresh_token")
         if not access_token or not refresh_token:
-            raise UtilityPurchaseError(
+            raise CollectionError(
                 f"DDIN {context} response missing accessToken/refreshToken: {data}"
             )
 
@@ -308,7 +352,7 @@ class DDINUtilityProvider(UtilityProvider):
     async def _dispatch_collection(
         self,
         provider: str,
-        meter_number: str,
+        customer_account_number: str,
         amount: Decimal,
         reference_id: str,
         customer_name: str,
@@ -321,31 +365,31 @@ class DDINUtilityProvider(UtilityProvider):
         # whether amount must be numeric vs string) are still inferred.
         payload = {
             "provider": provider,
-            "customerAccountNumber": meter_number,
+            "customerAccountNumber": customer_account_number,
             "customerName": customer_name,
             "amount": str(amount),
             "referenceId": reference_id,
         }
 
         try:
-            resp = await self._client.post(
-                self._settings.ddin_collection_path, json=payload, headers=headers
+            resp = await self._request_with_retry(
+                "POST", self._settings.ddin_collection_path, json=payload, headers=headers
             )
         except httpx.TimeoutException as exc:
-            raise UtilityPurchaseError(f"DDIN collection request timed out: {exc}") from exc
+            raise CollectionError(f"DDIN collection request timed out: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise UtilityPurchaseError(f"DDIN collection transport error: {exc}") from exc
+            raise CollectionError(f"DDIN collection transport error: {exc}") from exc
 
         if resp.status_code == 401:
             raise _DDINUnauthorizedError()
 
         if resp.is_error:
-            raise UtilityPurchaseError(self._format_error(resp))
+            raise CollectionError(self._format_error(resp))
 
         try:
             data = resp.json()
         except ValueError as exc:
-            raise UtilityPurchaseError(
+            raise CollectionError(
                 f"DDIN collection response was not valid JSON: {resp.text}"
             ) from exc
 
@@ -353,50 +397,45 @@ class DDINUtilityProvider(UtilityProvider):
         # returns HTTP 202 (not 200) with the payload nested under "data" and
         # a "status" field. Observed value: "status": "pending",
         # "transactionId": null - DDIN does NOT resolve the transaction in
-        # this response. This is an ASYNCHRONOUS API: initiate returns an
-        # acknowledgment, not a result. The real outcome (success/failure)
-        # arrives later - either via a status-check endpoint or a webhook
-        # (DDIN's own "Getting Started" guide says "...so you're notified the
-        # instant a transaction resolves, instead of polling", implying a
-        # webhook). NEITHER is confirmed yet - see the class docstring.
-        #
-        # STOPGAP: since UtilityProvider.purchase()'s contract is synchronous
-        # (return a token = success, raise = failure, nothing in between),
-        # and this codebase has no mechanism yet to resolve a transaction
-        # asynchronously after this call returns, treating "pending" as
-        # anything other than a failure would be actively wrong: it would
-        # report SUCCESS - and hand back operationReferenceId as if it were a
-        # real utility token - for a transaction whose real outcome DDIN
-        # hasn't determined yet. Raising here instead triggers the Fineract
-        # refund rollback, which is the safer failure mode (customer's money
-        # stays put; worst case they retry) versus a false-positive success
-        # (customer is told it worked before DDIN confirms the debit actually
-        # happened). This needs a real fix - see DDINUtilityProvider docstring.
+        # this response; the real outcome arrives later via the
+        # collection.success / collection.failed webhook (see class
+        # docstring). "pending" specifically means "wait for the webhook", not
+        # "failed" - raising CollectionError here would trigger an immediate
+        # Fineract refund for a transaction that may still succeed. Any OTHER
+        # non-success status is a genuine synchronous rejection and still
+        # fails immediately below.
         envelope = data.get("data") if isinstance(data.get("data"), dict) else data
         status = envelope.get("status")
+        if status and status.lower() == "pending":
+            raise CollectionPending(
+                operation_reference_id=envelope.get("operationReferenceId")
+            )
         if status and status.lower() not in ("success", "successful", "completed"):
-            raise UtilityPurchaseError(
-                f"DDIN collection did not complete synchronously (status={status!r}); "
-                "this integration does not yet support DDIN's async resolution "
-                f"(operationReferenceId={envelope.get('operationReferenceId')})"
+            raise CollectionError(
+                f"DDIN collection failed (status={status!r}); "
+                f"operationReferenceId={envelope.get('operationReferenceId')}"
             )
 
-        token = (
+        reference = (
             envelope.get("token")
             or envelope.get("transactionReference")
             or envelope.get("transactionId")
             or envelope.get("reference")
         )
-        if not token:
-            raise UtilityPurchaseError(
+        if not reference:
+            raise CollectionError(
                 f"DDIN collection response missing a token/reference field: {data}"
             )
 
         logger.info(
             "ddin_collection_succeeded",
-            extra={"provider": provider, "meter_number": meter_number, "reference_id": reference_id},
+            extra={
+                "provider": provider,
+                "customer_account_number": customer_account_number,
+                "reference_id": reference_id,
+            },
         )
-        return str(token)
+        return str(reference)
 
     @staticmethod
     def _format_error(resp: httpx.Response) -> str:
@@ -418,9 +457,9 @@ class DDINUtilityProvider(UtilityProvider):
         return f"DDIN collection failed ({resp.status_code}): {message}"
 
 
-def get_utility_provider(settings: Settings) -> UtilityProvider:
-    if settings.utility_provider_name == "ddin":
-        return DDINUtilityProvider(settings)
-    if settings.utility_provider_name == "dummy":
-        return DummyUtilityProvider(settings)
-    raise ValueError(f"Unknown utility_provider_name: {settings.utility_provider_name}")
+def get_collection_provider(settings: Settings) -> CollectionProvider:
+    if settings.collection_provider_name == "ddin":
+        return DDINCollectionProvider(settings)
+    if settings.collection_provider_name == "dummy":
+        return DummyCollectionProvider(settings)
+    raise ValueError(f"Unknown collection_provider_name: {settings.collection_provider_name}")

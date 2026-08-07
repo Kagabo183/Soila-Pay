@@ -15,16 +15,21 @@ export const PLAYGROUND_ENDPOINTS: PlaygroundEndpoint[] = [
   {
     id: "collection",
     method: "POST",
-    path: "/api/v1/utility/purchase",
-    name: "Collection (Utility Purchase)",
+    path: "/api/v1/collection/collect",
+    name: "Collection",
     category: "Collection",
     description:
-      "Debits a Fineract savings wallet, purchases utility credit (REG/WASAC), and auto-refunds on provider failure. Requires an Idempotency-Key header.",
-    defaultHeaders: { "Content-Type": "application/json", "Idempotency-Key": "idem-playground-0001" },
+      "Debits a customer's mobile money account (MTN/AIRTEL), deposits into a Fineract savings wallet, and auto-refunds on provider failure. Requires Idempotency-Key and Integrator-Key headers.",
+    defaultHeaders: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": "idem-playground-0001",
+      "Integrator-Key": "sk_your_integrator_key",
+    },
     defaultBody: {
       fineract_savings_account_id: "12345",
-      utility_provider: "REG",
-      meter_number: "04212345678",
+      provider: "MTN",
+      customer_account_number: "0788123456",
+      customer_name: "Jean Uwimana",
       amount_rwf: 5000,
     },
     requiresAuth: true,
@@ -32,7 +37,7 @@ export const PLAYGROUND_ENDPOINTS: PlaygroundEndpoint[] = [
   {
     id: "transaction-status",
     method: "GET",
-    path: "/api/v1/utility/transactions/{idempotency_key}",
+    path: "/api/v1/collection/transactions/{idempotency_key}",
     name: "Transaction Status",
     category: "Collection",
     description: "Look up a previously submitted collection transaction by its idempotency key.",

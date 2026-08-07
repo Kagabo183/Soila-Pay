@@ -89,14 +89,15 @@ const REFRESH_CURL = `curl -X POST "https://agenttestapi.ddin.rw/api/v1/auth/ref
   -H "Authorization: Bearer <expired-or-expiring-access-token>" \\
   -d '{ "refreshToken": "<refresh-token>" }'`;
 
-const COLLECTION_CURL = `curl -X POST "https://agenttestapi.ddin.rw/api/v1/utility/purchase" \\
+const COLLECTION_CURL = `curl -X POST "https://agenttestapi.ddin.rw/api/v1/collection/collect" \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer <access-token>" \\
   -H "Idempotency-Key: idem-2f6a9c-0001" \\
+  -H "Integrator-Key: sk_your_integrator_key" \\
   -d '{
     "fineract_savings_account_id": "12345",
-    "utility_provider": "REG",
-    "meter_number": "04212345678",
+    "provider": "MTN",
+    "customer_account_number": "0788123456",
+    "customer_name": "Jean Uwimana",
     "amount_rwf": 5000
   }'`;
 
@@ -106,9 +107,9 @@ const COLLECTION_RESPONSE = `{
   "fineract_savings_account_id": "12345",
   "debit_transaction_id": "9001",
   "refund_transaction_id": null,
-  "utility_token": "REG-AB12CD34EF56",
+  "provider_transaction_reference": "CYC-559013",
   "amount_rwf": 5000.00,
-  "message": "Purchase completed successfully",
+  "message": "Collection completed successfully",
   "refunded": false
 }`;
 
@@ -148,11 +149,11 @@ const WEBHOOK_PAYLOAD_SUCCESS = `{
   "event": "collection.success",
   "idempotency_key": "idem-2f6a9c-0001",
   "fineract_savings_account_id": "12345",
-  "utility_provider": "REG",
-  "meter_number": "04212345678",
+  "provider": "MTN",
+  "customer_account_number": "0788123456",
   "amount_rwf": 5000,
   "status": "SUCCESS",
-  "utility_token": "REG-AB12CD34EF56",
+  "provider_transaction_reference": "CYC-559013",
   "timestamp": "2026-08-07T11:42:00Z"
 }`;
 
@@ -160,12 +161,12 @@ const WEBHOOK_PAYLOAD_REFUNDED = `{
   "event": "collection.failed_refunded",
   "idempotency_key": "idem-2f6a9c-0002",
   "fineract_savings_account_id": "12345",
-  "utility_provider": "REG",
-  "meter_number": "00000000000",
+  "provider": "MTN",
+  "customer_account_number": "00000000000",
   "amount_rwf": 5000,
   "status": "FAILED_REFUNDED",
   "refund_transaction_id": "9014",
-  "message": "Utility purchase failed. Funds were refunded successfully.",
+  "message": "Collection failed. Funds were refunded successfully.",
   "timestamp": "2026-08-07T11:45:12Z"
 }`;
 
@@ -248,13 +249,13 @@ export default function DeveloperPortalPage() {
               Collection API
             </SectionHeading>
             <p className="text-sm text-muted-foreground">
-              Debits a customer&apos;s Fineract savings wallet and fulfills a utility purchase
-              (electricity/water). Idempotent - retried requests with the same{" "}
+              Debits a customer&apos;s mobile money account (MTN/Airtel) via DDIN and deposits the
+              result into a Fineract savings wallet. Idempotent - retried requests with the same{" "}
               <code className="rounded bg-secondary px-1 py-0.5 font-mono text-xs">Idempotency-Key</code>{" "}
               return the original result rather than double-debiting. On provider failure, the
               debit is automatically refunded.
             </p>
-            <CodeBlock code={COLLECTION_CURL} lang="bash" filename="POST /api/v1/utility/purchase" />
+            <CodeBlock code={COLLECTION_CURL} lang="bash" filename="POST /api/v1/collection/collect" />
             <CodeBlock code={COLLECTION_RESPONSE} lang="json" filename="200 OK" />
             <div className="flex flex-wrap gap-2">
               <StatusBadge variant="success">SUCCESS</StatusBadge>

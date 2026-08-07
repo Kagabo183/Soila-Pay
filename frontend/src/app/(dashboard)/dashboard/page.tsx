@@ -79,9 +79,9 @@ export default function DashboardPage() {
       const filtered = search
         ? result.items.filter(
             (c) =>
-              c.meterNumber.includes(search) ||
+              c.customerAccountNumber.includes(search) ||
               c.idempotencyKey.toLowerCase().includes(search.toLowerCase()) ||
-              c.utilityProvider.toLowerCase().includes(search.toLowerCase())
+              c.provider.toLowerCase().includes(search.toLowerCase())
           )
         : result.items;
       setRows(filtered);
@@ -99,7 +99,7 @@ export default function DashboardPage() {
       header: "Idempotency Key",
       render: (row) => <span className="font-mono text-xs">{truncateMiddle(row.idempotencyKey, 10)}</span>,
     },
-    { key: "utilityProvider", header: "Provider" },
+    { key: "provider", header: "Provider" },
     { key: "channel", header: "Channel" },
     {
       key: "amountRwf",
@@ -292,7 +292,7 @@ export default function DashboardPage() {
         <CardHeader className="flex-row items-center justify-between gap-4 space-y-0">
           <div>
             <CardTitle>Recent Collections</CardTitle>
-            <CardDescription>Latest utility purchase transactions across all channels</CardDescription>
+            <CardDescription>Latest collection transactions across all channels</CardDescription>
           </div>
           <SearchInput
             value={search}
@@ -300,7 +300,7 @@ export default function DashboardPage() {
               setSearch(v);
               setPage(1);
             }}
-            placeholder="Search meter, provider, key..."
+            placeholder="Search phone number, provider, key..."
             className="w-64"
           />
         </CardHeader>

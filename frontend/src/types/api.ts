@@ -1,5 +1,5 @@
 // Shared API domain types. These are shaped to match:
-//  - Our own FastAPI middleware (app/schemas/utility.py, transaction_logs table)
+//  - Our own FastAPI middleware (app/schemas/collection.py, transaction_logs table)
 //  - Apache Fineract's REST resource shapes (clients, loans, savings, journal entries)
 // so switching services/*.ts from mock to production data is a matter of pointing
 // Axios at the real base URL, not reshaping the UI.
@@ -109,7 +109,8 @@ export interface JournalEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Collection API (our middleware: POST /api/v1/utility/purchase)
+// Collection API (our middleware: POST /api/v1/collection/collect) - a mobile
+// money collection aggregator. There is no utility-vending concept here.
 // ---------------------------------------------------------------------------
 
 export type CollectionStatus =
@@ -123,21 +124,23 @@ export interface CollectionTransaction {
   id: string;
   idempotencyKey: string;
   fineractSavingsAccountId: string;
-  utilityProvider: "REG" | "WASAC" | string;
-  meterNumber: string;
+  provider: "MTN" | "AIRTEL" | string;
+  customerAccountNumber: string;
+  customerName: string;
   amountRwf: number;
   status: CollectionStatus;
   debitTransactionId: string | null;
   refundTransactionId: string | null;
-  utilityToken: string | null;
+  providerTransactionReference: string | null;
   channel: "MTN" | "AIRTEL" | "BANK";
   createdAt: string;
 }
 
 export interface CollectionRequest {
   fineract_savings_account_id: string;
-  utility_provider: string;
-  meter_number: string;
+  provider: string;
+  customer_account_number: string;
+  customer_name: string;
   amount_rwf: number;
 }
 
@@ -147,7 +150,7 @@ export interface CollectionResponse {
   fineract_savings_account_id: string;
   debit_transaction_id: string | null;
   refund_transaction_id: string | null;
-  utility_token: string | null;
+  provider_transaction_reference: string | null;
   amount_rwf: number;
   message: string;
   refunded: boolean;
@@ -267,4 +270,95 @@ export interface ApiIntegrationSettings {
   retryCount: number;
   webhookSecret: string;
   environment: "sandbox" | "production";
+}
+
+// ---------------------------------------------------------------------------
+// Integrators & margin (our own aggregator clients, and what we charge them
+// on top of DDIN's cost) - shaped to match app/schemas/integrator.py and the
+// GET/POST/PATCH /api/v1/admin/integrators endpoints.
+// ---------------------------------------------------------------------------
+
+export type ProductionStatus = "NOT_SUBMITTED" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+
+export interface Integrator {
+  id: number;
+  name: string;
+  sandboxApiKey: string;
+  productionApiKey: string | null;
+  productionStatus: ProductionStatus;
+  productionRejectionReason: string | null;
+  phoneNumber: string | null;
+  businessLocation: string | null;
+  taxClearanceReference: string | null;
+  rdbCertificateReference: string | null;
+  ipWhitelist: string | null;
+  feePercentage: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegratorCreateRequest {
+  name: string;
+  feePercentage: number;
+  // Optional: set both to also hand the integrator working self-service
+  // portal login credentials (they can then log in at /portal/login)
+  // instead of requiring them to sign up themselves at /portal/signup.
+  phoneNumber?: string;
+  password?: string;
+}
+
+export interface IntegratorUpdateRequest {
+  name?: string;
+  feePercentage?: number;
+  isActive?: boolean;
+}
+
+export interface IntegratorSummary {
+  integratorId: number;
+  integratorName: string;
+  currentFeePercentage: number;
+  successfulTransactions: number;
+  totalCollectedRwf: number;
+  totalFeeChargedRwf: number;
+  totalDdinCostRwf: number;
+  totalMarginRwf: number;
+}
+
+// ---------------------------------------------------------------------------
+// Integrator self-service portal (app/api/v1/integrator_portal.py) - separate
+// from the superadmin console's own auth (auth.service.ts / auth-store.ts).
+// An integrator signs up with just a phone number to start testing in
+// sandbox immediately, then submits KYC to unlock a production key.
+// ---------------------------------------------------------------------------
+
+export interface IntegratorSignupPayload {
+  name: string;
+  phoneNumber: string;
+  password: string;
+}
+
+export interface IntegratorLoginPayload {
+  phoneNumber: string;
+  password: string;
+}
+
+export interface IntegratorSession {
+  token: string;
+  integrator: Integrator;
+}
+
+export interface ProductionKycPayload {
+  businessLocation: string;
+  ipWhitelist?: string;
+}
+
+export type DocumentType = "TAX_CLEARANCE" | "RDB_CERTIFICATE";
+
+export interface IntegratorDocument {
+  documentType: DocumentType;
+  fileName: string;
+  contentType: string;
+  fileSizeBytes: number;
+  uploadedAt: string;
 }
