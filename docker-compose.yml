@@ -1,0 +1,132 @@
+name: soila-pay
+
+services:
+  # Our own audit log DB - unrelated to Fineract, plain MySQL 8 as originally
+  # specified. See fineract-db below for why Fineract itself does NOT share
+  # this database.
+  soila-pay-db:
+    image: mysql:8.0
+    container_name: soila-pay-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DB}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db_init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Dedicated database for Fineract only. VERIFIED (via apache/fineract's own
+  # README, "How to run using Docker or Podman" section): the published
+  # apache/fineract image bundles ONLY the PostgreSQL JDBC driver - MySQL and
+  # MariaDB drivers are both excluded due to license incompatibility (MySQL
+  # Connector/J is GPL, MariaDB Connector/J is LGPL; neither is a license the
+  # ASF can redistribute bundled in a binary release). The README additionally
+  # confirms MySQL/MariaDB support in Fineract itself is now DEPRECATED
+  # (FSIP-9: Standardize on PostgreSQL). This was hit empirically during setup:
+  # pointing fineract-core at MySQL 8, then at MariaDB 11.4, both failed at
+  # startup with "Failed to load driver class" for the respective driver.
+  # Postgres is the only database the official image actually supports without
+  # building a custom image on top of it - hence a separate node here rather
+  # than sharing soila-pay-db.
+  fineract-db:
+    image: postgres:16-alpine
+    container_name: fineract-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${FINERACT_DB_PASSWORD}
+      # POSTGRES_DB creates one DB on first boot; fineract_default is created by
+      # the second statement in db_init_postgres/001_create_databases.sql.
+      POSTGRES_DB: fineract_tenants
+    volumes:
+      - fineract_db_data:/var/lib/postgresql/data
+      - ./db_init_postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # BEST-EFFORT / VALIDATE BEFORE PRODUCTION USE:
+  # apache/fineract has no pinned "1.9.0"-style semver tag on Docker Hub as of
+  # writing - published tags are "latest", "develop", and per-commit hashes. This
+  # uses "latest", which tracks the project's mainline branch rather than a fixed
+  # release; pin to a specific commit-hash tag from Docker Hub if you need
+  # reproducible builds. The FINERACT_* env vars below were sourced from
+  # Fineract's own config/docker/env/{fineract.env,fineract-common.env,
+  # fineract-postgresql.env} in the apache/fineract repo and are best-effort -
+  # confirm the container reaches a healthy state and that
+  # /fineract-provider/api/v1 responds before relying on it.
+  fineract-core:
+    image: apache/fineract:latest
+    container_name: fineract-core
+    restart: unless-stopped
+    environment:
+      FINERACT_SERVER_SSL_ENABLED: "true"
+      FINERACT_HIKARI_DRIVER_SOURCE_CLASS_NAME: org.postgresql.Driver
+      FINERACT_HIKARI_JDBC_URL: jdbc:postgresql://fineract-db:5432/fineract_tenants
+      FINERACT_HIKARI_USERNAME: postgres
+      FINERACT_HIKARI_PASSWORD: ${FINERACT_DB_PASSWORD}
+      # These FINERACT_DEFAULT_TENANTDB_* vars tell Fineract how to connect to
+      # the "default" tenant's own database (fineract_default), which
+      # db_init_postgres/001_create_databases.sql pre-creates (Postgres, unlike
+      # MySQL, can't create a sibling database from within Fineract's own
+      # connection/transaction, so it must already exist before boot).
+      FINERACT_DEFAULT_TENANTDB_IDENTIFIER: default
+      FINERACT_DEFAULT_TENANTDB_NAME: fineract_default
+      FINERACT_DEFAULT_TENANTDB_HOSTNAME: fineract-db
+      FINERACT_DEFAULT_TENANTDB_PORT: 5432
+      FINERACT_DEFAULT_TENANTDB_UID: postgres
+      FINERACT_DEFAULT_TENANTDB_PWD: ${FINERACT_DB_PASSWORD}
+      FINERACT_DEFAULT_MASTER_PASSWORD: fineract
+    ports:
+      - "8443:8443"
+    depends_on:
+      fineract-db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      # Fineract's own first-boot migrations can take a couple of minutes; this
+      # mirrors the healthcheck used in Fineract's own docker-compose fragment.
+      test: ["CMD", "sh", "-c", "nc -z localhost 8443"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+
+  soila-pay-middleware:
+    build: .
+    image: soila-pay:latest
+    container_name: soila-pay-middleware
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_HOST: soila-pay-db
+    ports:
+      - "8000:8000"
+    depends_on:
+      soila-pay-db:
+        condition: service_healthy
+      # Not service_healthy: Fineract's first-boot migrations can take minutes,
+      # and the middleware process itself doesn't need Fineract up before it
+      # starts - only before the first real purchase request arrives. Waiting on
+      # "started" keeps local iteration fast; a request made before Fineract is
+      # actually ready will just surface as a 502 from the debit call.
+      fineract-core:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  mysql_data:
+  fineract_db_data:

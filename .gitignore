@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Env files - real secrets live only in .env, never commit it. .env.example
+# stays tracked as the template.
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+*.log
+
+# Frontend has its own .gitignore (node_modules, .next, tsbuildinfo, etc.)

@@ -1,0 +1,38 @@
+meta {
+  name: Purchase - Forced Utility Failure (Rollback)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/utility/purchase
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "fineract_savings_account_id": "{{savingsAccountId}}",
+    "utility_provider": "REG",
+    "meter_number": "00000000000",
+    "amount_rwf": 5000
+  }
+}
+
+script:pre-request {
+  // "00000000000" is the dummy utility provider's magic fail meter number - it
+  // always rejects, which forces the debit to be rolled back (refunded). A fresh
+  // key each run exercises the full debit -> fail -> refund sequence.
+  bru.setVar("idempotencyKey", "rollback-" + Date.now());
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq FAILED_REFUNDED
+  res.body.refunded: eq true
+}
