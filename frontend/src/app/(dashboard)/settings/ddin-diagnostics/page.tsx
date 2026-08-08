@@ -22,6 +22,7 @@ import { StepInspector } from "@/components/ddin-diagnostics/inspector";
 import { ConnectionDetailsCard } from "@/components/ddin-diagnostics/connection-details";
 import { LogViewer } from "@/components/ddin-diagnostics/log-viewer";
 import { ApiDocsCard } from "@/components/ddin-diagnostics/api-docs";
+import { formatDateTime } from "@/lib/utils";
 
 const STEP_LABELS: Record<DdinDiagnosticStep["step"], string> = {
   config: "Config",
@@ -172,7 +173,7 @@ export default function DdinDiagnosticsPage() {
           <span>
             Last successful run:{" "}
             <span className="font-medium text-foreground">
-              {lastSuccessfulRun ? new Date(lastSuccessfulRun.ranAt).toLocaleString() : "Never this session"}
+              {lastSuccessfulRun ? formatDateTime(lastSuccessfulRun.ranAt) : "Never this session"}
             </span>
           </span>
           <span>

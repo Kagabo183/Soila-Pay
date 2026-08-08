@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ from app.api.v1.collection import router as collection_router
 from app.api.v1.ddin_diagnostics import router as ddin_diagnostics_router
 from app.api.v1.deps import require_admin
 from app.api.v1.integrator_portal import router as integrator_portal_router
+from app.api.v1.providers import router as providers_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.config import settings
 from app.db.database import close_pool, create_pool
@@ -27,6 +29,34 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 DEFAULT_INSECURE_SECRET = "insecure-dev-secret-change-me"
+
+
+async def _reconciliation_loop(app: FastAPI, interval_seconds: float) -> None:
+    """Periodically polls DDIN for every DEBITED (awaiting-outcome) row so a
+    collection DDIN already resolved gets reflected locally without anyone
+    needing to view or manually sync it - see settings.
+    collection_reconciliation_enabled and
+    CollectionOrchestrator.sync_with_provider. Runs for the lifetime of the
+    app; cancelled on shutdown (see lifespan's finally block)."""
+    repo: TransactionLogRepo = app.state.transaction_log_repo
+    orchestrator: CollectionOrchestrator = app.state.orchestrator
+    while True:
+        try:
+            keys = await repo.list_debited_idempotency_keys()
+            for key in keys:
+                try:
+                    await orchestrator.sync_with_provider(key)
+                except Exception:
+                    logger.exception(
+                        "reconciliation_sync_failed", extra={"idempotency_key": key}
+                    )
+            if keys:
+                logger.info("reconciliation_sweep_completed", extra={"count": len(keys)})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("reconciliation_loop_error")
+        await asyncio.sleep(interval_seconds)
 
 
 @asynccontextmanager
@@ -47,6 +77,7 @@ async def lifespan(app: FastAPI):
     sandbox_collection_provider = DummyCollectionProvider(settings)
 
     app.state.db_pool = pool
+    app.state.transaction_log_repo = repo
     app.state.integrator_repo = integrator_repo
     app.state.integrator_document_repo = integrator_document_repo
     app.state.ddin_diagnostics_repo = DdinDiagnosticsRepo(pool)
@@ -90,10 +121,20 @@ async def lifespan(app: FastAPI):
             "real secret before relying on admin auth in production."
         )
 
+    reconciliation_task = None
+    if settings.collection_reconciliation_enabled:
+        reconciliation_task = asyncio.create_task(
+            _reconciliation_loop(app, settings.collection_reconciliation_interval_seconds)
+        )
+
     logger.info("startup_complete", extra={"app_env": settings.app_env})
     try:
         yield
     finally:
+        if reconciliation_task is not None:
+            reconciliation_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reconciliation_task
         await fineract_client.aclose()
         await sandbox_fineract_client.aclose()
         await collection_provider.aclose()
@@ -118,6 +159,9 @@ app.include_router(
     admin_router, prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin)]
 )
 app.include_router(webhooks_router, prefix="/api/v1/webhooks", tags=["webhooks"])
+app.include_router(
+    providers_router, prefix="/api/v1/providers", tags=["providers"], dependencies=[Depends(require_admin)]
+)
 app.include_router(
     integrator_portal_router, prefix="/api/v1/integrator-portal", tags=["integrator-portal"]
 )

@@ -8,13 +8,24 @@ import pymysql
 MYSQL_DUPLICATE_ENTRY = 1062
 
 # transaction_logs.status values - keep in sync with db_init/001_schema.sql
+# and db_init/009_add_debit_failed_status.sql
 STATUS_PENDING = "PENDING"
 STATUS_DEBITED = "DEBITED"
+STATUS_DEBIT_FAILED = "DEBIT_FAILED"
 STATUS_SUCCESS = "SUCCESS"
 STATUS_FAILED_REFUNDED = "FAILED_REFUNDED"
 STATUS_FAILED_REFUND_ERROR = "FAILED_REFUND_ERROR"
 
-TERMINAL_STATUSES = {STATUS_SUCCESS, STATUS_FAILED_REFUNDED, STATUS_FAILED_REFUND_ERROR}
+# DEBIT_FAILED is terminal but distinct from the other three: no money moved,
+# so there's nothing to reconcile - it just means this exact idempotency key
+# will keep returning the same clean error. See _handle_existing in
+# collection_orchestrator.py.
+TERMINAL_STATUSES = {
+    STATUS_DEBIT_FAILED,
+    STATUS_SUCCESS,
+    STATUS_FAILED_REFUNDED,
+    STATUS_FAILED_REFUND_ERROR,
+}
 MID_FLIGHT_STATUSES = {STATUS_PENDING, STATUS_DEBITED}
 
 
@@ -78,6 +89,15 @@ class TransactionLogRepo:
             idempotency_key,
             status=STATUS_DEBITED,
             fineract_debit_txn_id=debit_txn_id,
+        )
+
+    async def mark_debit_failed(self, idempotency_key: str, error_detail: str) -> None:
+        """No money moved - a clean, terminal failure (see STATUS_DEBIT_FAILED
+        above), not a mid-flight state that blocks retries with this key."""
+        await self._update(
+            idempotency_key,
+            status=STATUS_DEBIT_FAILED,
+            error_detail=error_detail,
         )
 
     async def mark_provider_pending(
@@ -151,6 +171,106 @@ class TransactionLogRepo:
             error_detail=error_detail,
             response_payload=json.dumps(response_payload),
         )
+
+    async def list_paginated(
+        self,
+        page: int,
+        page_size: int,
+        status: Optional[list[str]] = None,
+        provider: Optional[list[str]] = None,
+    ) -> tuple[list[dict], int]:
+        """Newest first. Powers the dashboard's Recent Collections table -
+        see app/api/v1/collection.py's GET /transactions."""
+        where_clauses = []
+        params: list[Any] = []
+        if status:
+            where_clauses.append(f"status IN ({','.join(['%s'] * len(status))})")
+            params.extend(status)
+        if provider:
+            where_clauses.append(f"provider IN ({','.join(['%s'] * len(provider))})")
+            params.extend(provider)
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    f"SELECT COUNT(*) AS total FROM transaction_logs {where_sql}", params
+                )
+                total = (await cur.fetchone())["total"]
+
+                await cur.execute(
+                    f"""
+                    SELECT * FROM transaction_logs {where_sql}
+                    ORDER BY id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, page_size, (page - 1) * page_size],
+                )
+                rows = await cur.fetchall()
+        return rows, total
+
+    async def provider_stats(self) -> list[dict]:
+        """One row per distinct provider ever seen, with today's collection
+        count and a success rate. Powers GET /api/v1/providers - there's no
+        separate "providers" table; a provider is just a value of
+        transaction_logs.provider, so this is computed, not stored.
+
+        resolved_count (the success-rate denominator) deliberately EXCLUDES
+        PENDING/DEBITED rows - those haven't concluded yet (DDIN hasn't
+        confirmed an outcome, or its webhook hasn't reached us - see
+        CollectionOrchestrator.sync_with_provider), so counting them as "not
+        successful" would understate a provider's real success rate and can
+        misclassify a perfectly healthy provider as DOWN."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    """
+                    SELECT
+                        provider,
+                        SUM(status NOT IN ('PENDING', 'DEBITED')) AS resolved_count,
+                        SUM(status = 'SUCCESS') AS success_count,
+                        SUM(created_at >= CURDATE()) AS collections_today
+                    FROM transaction_logs
+                    GROUP BY provider
+                    ORDER BY provider
+                    """
+                )
+                return await cur.fetchall()
+
+    async def daily_volume(self, days: int) -> list[dict]:
+        """One row per calendar day (including zero-activity days) for the
+        last `days` days, oldest first. Powers GET /api/v1/providers/volume."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    """
+                    SELECT
+                        DATE(created_at) AS day,
+                        COUNT(*) AS collections,
+                        SUM(status IN ('FAILED_REFUNDED', 'FAILED_REFUND_ERROR')) AS failed
+                    FROM transaction_logs
+                    WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL %s DAY)
+                    GROUP BY DATE(created_at)
+                    ORDER BY day
+                    """,
+                    (days - 1,),
+                )
+                return await cur.fetchall()
+
+    async def list_debited_idempotency_keys(self) -> list[str]:
+        """Every row genuinely awaiting the provider's async outcome - polled
+        on a timer by the background reconciliation loop (app/main.py) so a
+        collection DDIN already resolved gets picked up even if nobody ever
+        views or manually syncs it - see
+        CollectionOrchestrator.sync_with_provider."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT idempotency_key FROM transaction_logs WHERE status = %s",
+                    (STATUS_DEBITED,),
+                )
+                rows = await cur.fetchall()
+                return [row[0] for row in rows]
 
     async def _update(self, idempotency_key: str, **fields: Any) -> None:
         set_clause = ", ".join(f"{col} = %s" for col in fields)

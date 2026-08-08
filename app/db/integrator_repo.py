@@ -35,8 +35,10 @@ class IntegratorRepo:
         """Matches either sandbox_api_key or production_api_key. The returned
         dict carries a synthetic `key_mode` ("sandbox"|"production") so the
         caller (see app/api/v1/collection.py) can route the request to the
-        matching environment - sandbox keys always run against the safe dummy
-        provider regardless of the globally configured collection provider."""
+        matching environment - sandbox keys run against the safe dummy
+        provider UNLESS this integrator's sandbox_uses_real_provider is set
+        (a per-row DB flag, not a hardcoded check - see
+        008_integrator_sandbox_real_provider.sql)."""
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
@@ -103,6 +105,7 @@ class IntegratorRepo:
         name: Optional[str] = None,
         fee_percentage: Optional[Decimal] = None,
         is_active: Optional[bool] = None,
+        sandbox_uses_real_provider: Optional[bool] = None,
     ) -> Optional[dict]:
         fields: dict[str, Any] = {}
         if name is not None:
@@ -111,6 +114,8 @@ class IntegratorRepo:
             fields["fee_percentage"] = str(fee_percentage)
         if is_active is not None:
             fields["is_active"] = int(is_active)
+        if sandbox_uses_real_provider is not None:
+            fields["sandbox_uses_real_provider"] = int(sandbox_uses_real_provider)
 
         if fields:
             set_clause = ", ".join(f"{col} = %s" for col in fields)

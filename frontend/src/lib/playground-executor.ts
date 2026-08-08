@@ -1,6 +1,7 @@
 import { authService } from "@/services/auth.service";
 import { collectionService } from "@/services/collection.service";
 import { webhookService } from "@/services/webhook.service";
+import { useSettingsStore } from "@/store/settings-store";
 import type { CollectionRequest, PlaygroundResult } from "@/types/api";
 
 // Routes a Playground request through the *same* service layer the rest of the
@@ -39,12 +40,9 @@ export async function executePlaygroundRequest(
       }
       case "transaction-status": {
         const key = String(body.idempotency_key ?? "");
-        const { items } = await collectionService.list({ pageSize: 200 });
-        const found = items.find((c) => c.idempotencyKey === key) ?? items[0];
-        if (!found) {
-          status = 404;
-          responseBody = { message: "Transaction not found for idempotency key", idempotency_key: key };
-        } else {
+        const integratorApiKey = headers["Integrator-Key"] || headers["integrator-key"] || "";
+        try {
+          const found = await collectionService.getByIdempotencyKey(key, integratorApiKey);
           responseBody = {
             idempotency_key: found.idempotencyKey,
             status: found.status,
@@ -54,15 +52,25 @@ export async function executePlaygroundRequest(
             amount_rwf: found.amountRwf,
             created_at: found.createdAt,
           };
+        } catch (err) {
+          status = 404;
+          responseBody = {
+            message: err instanceof Error ? err.message : "Transaction not found",
+            idempotency_key: key,
+          };
         }
         break;
       }
-      case "webhook-registration": {
-        responseBody = await webhookService.register({
-          url: String(body.url ?? ""),
-          events: Array.isArray(body.events) ? (body.events as string[]) : [],
-        });
-        status = 201;
+      case "webhook-receiver-test": {
+        const secret = useSettingsStore.getState().webhookSecret;
+        responseBody = await webhookService.testDdinReceiver(
+          {
+            event: (body.event as "collection.success" | "collection.failed") ?? "collection.success",
+            referenceId: String(body.referenceId ?? ""),
+            transactionId: body.transactionId ? String(body.transactionId) : undefined,
+          },
+          secret
+        );
         break;
       }
       default:

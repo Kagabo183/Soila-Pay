@@ -70,6 +70,7 @@ async def update_integrator(integrator_id: int, body: IntegratorUpdate, request:
         name=body.name,
         fee_percentage=body.fee_percentage,
         is_active=body.is_active,
+        sandbox_uses_real_provider=body.sandbox_uses_real_provider,
     )
 
 

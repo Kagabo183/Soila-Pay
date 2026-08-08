@@ -1,5 +1,5 @@
 import { CheckCircle2, XCircle, Loader2, MinusCircle, Circle } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatTime } from "@/lib/utils";
 import type { DdinDiagnosticStep, DdinDiagnosticStatus } from "@/services/ddin-diagnostics.service";
 
 export type StepperNodeStatus = DdinDiagnosticStatus | "PENDING";
@@ -88,7 +88,7 @@ export function DiagnosticsStepper({ nodes }: { nodes: StepperNode[] }) {
                     <span>{Math.round(node.latencyMs)}ms</span>
                   )}
                   {node.startedAt && (
-                    <span>{new Date(node.startedAt).toLocaleTimeString()}</span>
+                    <span>{formatTime(node.startedAt)}</span>
                   )}
                 </div>
               </div>

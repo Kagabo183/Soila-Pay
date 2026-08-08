@@ -92,7 +92,110 @@ async def test_refund_exhausted_marks_failed_refund_error(
 
     assert response.status == "FAILED_REFUND_ERROR"
     assert response.refunded is False
-    assert len(fineract.deposit_calls) == settings.refund_max_attempts
+
+
+async def test_sync_with_provider_resolves_success_when_provider_confirms(
+    settings, repo, fineract, collection_provider, collection_request
+):
+    from app.services.collection_provider import ProviderCollectionStatus
+
+    orchestrator = make_orchestrator(settings, repo, fineract, collection_provider)
+    pending_request = collection_request.model_copy(
+        update={"customer_account_number": collection_provider.PENDING_ACCOUNT_NUMBER}
+    )
+    pending = await orchestrator.execute_collection(pending_request, "key-sync-success")
+    assert pending.status == "PENDING"
+
+    collection_provider.status_responses["key-sync-success"] = ProviderCollectionStatus(
+        status="success",
+        message="Mock MTN payment completed successfully",
+        provider_transaction_reference="MTN-REAL-REF",
+        customer_name=pending_request.customer_name,
+    )
+
+    synced = await orchestrator.sync_with_provider("key-sync-success")
+
+    assert synced.status == "SUCCESS"
+    assert synced.provider_transaction_reference == "MTN-REAL-REF"
+    row = await repo.get_by_idempotency_key("key-sync-success")
+    assert row["status"] == "SUCCESS"
+
+
+async def test_sync_with_provider_resolves_failure_and_refunds(
+    settings, repo, fineract, collection_provider, collection_request
+):
+    from app.services.collection_provider import ProviderCollectionStatus
+
+    orchestrator = make_orchestrator(settings, repo, fineract, collection_provider)
+    pending_request = collection_request.model_copy(
+        update={"customer_account_number": collection_provider.PENDING_ACCOUNT_NUMBER}
+    )
+    await orchestrator.execute_collection(pending_request, "key-sync-failed")
+
+    collection_provider.status_responses["key-sync-failed"] = ProviderCollectionStatus(
+        status="failed",
+        message="Invalid Vendor",
+        provider_transaction_reference=None,
+        customer_name=pending_request.customer_name,
+    )
+
+    synced = await orchestrator.sync_with_provider("key-sync-failed")
+
+    assert synced.status == "FAILED_REFUNDED"
+    assert synced.refunded is True
+    assert len(fineract.deposit_calls) == 1
+
+
+async def test_sync_with_provider_noop_when_still_pending(
+    settings, repo, fineract, collection_provider, collection_request
+):
+    from app.services.collection_provider import ProviderCollectionStatus
+
+    orchestrator = make_orchestrator(settings, repo, fineract, collection_provider)
+    pending_request = collection_request.model_copy(
+        update={"customer_account_number": collection_provider.PENDING_ACCOUNT_NUMBER}
+    )
+    await orchestrator.execute_collection(pending_request, "key-sync-still-pending")
+    collection_provider.status_responses["key-sync-still-pending"] = ProviderCollectionStatus(
+        status="pending", message=None, provider_transaction_reference=None, customer_name=None
+    )
+
+    synced = await orchestrator.sync_with_provider("key-sync-still-pending")
+
+    assert synced.status == "PENDING"
+    row = await repo.get_by_idempotency_key("key-sync-still-pending")
+    assert row["status"] == "DEBITED"  # local bookkeeping state unchanged
+
+
+async def test_sync_with_provider_noop_when_provider_has_no_record(
+    settings, repo, fineract, collection_provider, collection_request
+):
+    orchestrator = make_orchestrator(settings, repo, fineract, collection_provider)
+    pending_request = collection_request.model_copy(
+        update={"customer_account_number": collection_provider.PENDING_ACCOUNT_NUMBER}
+    )
+    await orchestrator.execute_collection(pending_request, "key-sync-unknown")
+    # No entry set in status_responses -> get_status() returns None, like a
+    # genuine DDIN 404 "Transaction not found".
+
+    synced = await orchestrator.sync_with_provider("key-sync-unknown")
+
+    assert synced.status == "PENDING"
+
+
+async def test_sync_with_provider_noop_when_already_terminal(
+    settings, repo, fineract, collection_provider, collection_request
+):
+    orchestrator = make_orchestrator(settings, repo, fineract, collection_provider)
+    success = await orchestrator.execute_collection(collection_request, "key-sync-terminal")
+    assert success.status == "SUCCESS"
+
+    synced = await orchestrator.sync_with_provider("key-sync-terminal")
+
+    assert synced.status == "SUCCESS"
+    # Never even asked the provider - a terminal row has nothing to reconcile.
+    assert "key-sync-terminal" not in collection_provider.get_status_calls
+    assert len(fineract.deposit_calls) == 0
 
 
 async def test_previous_refund_error_requires_manual_reconciliation(

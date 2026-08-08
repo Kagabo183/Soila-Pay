@@ -8,6 +8,7 @@ import { useSettingsStore } from "@/store/settings-store";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { toast } from "@/store/toast-store";
 import { authService } from "@/services/auth.service";
+import { MOCK_MODE } from "@/lib/mock";
 
 export function TopNav() {
   const theme = useThemeStore((s) => s.theme);
@@ -31,12 +32,12 @@ export function TopNav() {
           {environment === "production" ? "Production" : "Sandbox"}
         </StatusBadge>
         <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
-          {environment === "production" ? (
-            <Wifi className="h-3.5 w-3.5 text-success" />
-          ) : (
+          {MOCK_MODE ? (
             <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />
+          ) : (
+            <Wifi className="h-3.5 w-3.5 text-success" />
           )}
-          Live mock mode
+          {MOCK_MODE ? "Mock data" : "Live - real backend"}
         </span>
       </div>
 

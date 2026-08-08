@@ -15,6 +15,20 @@ from app.exceptions import CollectionError, CollectionPending
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ProviderCollectionStatus:
+    """A provider's own real, current view of a previously-initiated
+    collection - used to reconcile our local record when we can't rely on
+    (or haven't yet received) an async webhook. `status` is whatever
+    vocabulary the provider itself uses, lowercased (DDIN: "pending" /
+    "success" / "failed") - never remapped or invented here."""
+
+    status: str
+    message: Optional[str]
+    provider_transaction_reference: Optional[str]
+    customer_name: Optional[str]
+
+
 class CollectionProvider(ABC):
     @abstractmethod
     async def collect(
@@ -35,6 +49,13 @@ class CollectionProvider(ABC):
         customer_name: forwarded where a provider requires it (e.g. DDIN's
         required `customerName`).
         """
+
+    async def get_status(self, reference_id: str) -> Optional[ProviderCollectionStatus]:
+        """Query the provider for a previously-initiated collection's current
+        state, by the same reference_id passed to collect(). Returns None if
+        the provider has no record of it, or doesn't support this at all.
+        Default: unsupported - only DDINCollectionProvider overrides this."""
+        return None
 
     async def aclose(self) -> None:
         """Override if the provider owns a resource (e.g. an httpx.AsyncClient) to release."""
@@ -436,6 +457,78 @@ class DDINCollectionProvider(CollectionProvider):
             },
         )
         return str(reference)
+
+    # -- Status reconciliation -----------------------------------------------
+
+    async def get_status(self, reference_id: str) -> Optional[ProviderCollectionStatus]:
+        """GET {ddin_collection_status_path}/{reference_id} - see config.py
+        for how this endpoint was discovered. Used to actively reconcile a
+        DEBITED (awaiting-webhook) transaction with DDIN's real, current
+        outcome - see CollectionOrchestrator.sync_with_provider."""
+        if self._token_state.access_token is None:
+            await self._ensure_logged_in()
+
+        token_version = self._token_state.version
+        try:
+            return await self._fetch_status(reference_id)
+        except _DDINUnauthorizedError:
+            await self._renew_session(seen_version=token_version)
+            try:
+                return await self._fetch_status(reference_id)
+            except _DDINUnauthorizedError as exc:
+                raise CollectionError(
+                    "DDIN rejected the status lookup with 401 even after refreshing "
+                    "credentials and retrying once"
+                ) from exc
+
+    async def _fetch_status(self, reference_id: str) -> Optional[ProviderCollectionStatus]:
+        headers = {"Authorization": f"Bearer {self._token_state.access_token}"}
+        try:
+            resp = await self._request_with_retry(
+                "GET",
+                f"{self._settings.ddin_collection_status_path}/{reference_id}",
+                headers=headers,
+            )
+        except httpx.TimeoutException as exc:
+            raise CollectionError(f"DDIN status lookup timed out: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise CollectionError(f"DDIN status lookup transport error: {exc}") from exc
+
+        if resp.status_code == 401:
+            raise _DDINUnauthorizedError()
+
+        if resp.status_code == 404:
+            # CONFIRMED live: a genuinely unknown reference returns 404 with a
+            # real JSON body {"success": false, "message": "Transaction not
+            # found"}. If it's NOT valid JSON, this 404 is a routing error
+            # (wrong path), not "unknown transaction" - don't mask that as
+            # "still pending" forever.
+            try:
+                resp.json()
+            except ValueError as exc:
+                raise CollectionError(
+                    f"DDIN status endpoint returned 404 (check ddin_collection_status_path): "
+                    f"{resp.text[:200]}"
+                ) from exc
+            return None
+
+        if resp.is_error:
+            raise CollectionError(self._format_error(resp))
+
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise CollectionError(f"DDIN status response was not valid JSON: {resp.text}") from exc
+
+        envelope = data.get("data") if isinstance(data.get("data"), dict) else data
+        status = envelope.get("status")
+        reference = envelope.get("transactionId") or envelope.get("operationReferenceId")
+        return ProviderCollectionStatus(
+            status=str(status).lower() if status else "",
+            message=envelope.get("message"),
+            provider_transaction_reference=str(reference) if reference else None,
+            customer_name=envelope.get("customerName"),
+        )
 
     @staticmethod
     def _format_error(resp: httpx.Response) -> str:

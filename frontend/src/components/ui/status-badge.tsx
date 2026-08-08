@@ -36,6 +36,7 @@ const STATUS_MAP: Record<string, VariantProps<typeof badgeVariants>["variant"]> 
   IN_PROGRESS: "warning",
   RETRYING: "warning",
   FAILED: "destructive",
+  DEBIT_FAILED: "destructive",
   FAILED_REFUNDED: "warning",
   FAILED_REFUND_ERROR: "destructive",
   REJECTED: "destructive",

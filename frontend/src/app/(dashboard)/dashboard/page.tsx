@@ -23,6 +23,7 @@ import { collectionService } from "@/services/collection.service";
 import { disbursementService } from "@/services/disbursement.service";
 import { providerService } from "@/services/provider.service";
 import { formatCurrency, formatNumber, formatDateTime, truncateMiddle } from "@/lib/utils";
+import { collectionStatusLabel, collectionStatusTone } from "@/lib/collection-status";
 import type { CollectionTransaction, Provider } from "@/types/api";
 
 const PROVIDER_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -54,15 +55,17 @@ export default function DashboardPage() {
   React.useEffect(() => {
     let mounted = true;
     (async () => {
-      const [p, s] = await Promise.all([
+      const [p, s, collectionSummary, disbursementSummary] = await Promise.all([
         providerService.list(),
         providerService.dailyVolumeSeries(14),
+        collectionService.summaryToday(),
+        disbursementService.summaryToday(),
       ]);
       if (!mounted) return;
       setProviders(p);
       setSeries(s);
-      setCollectionSummary(collectionService.summaryToday());
-      setDisbursementSummary(disbursementService.summaryToday());
+      setCollectionSummary(collectionSummary);
+      setDisbursementSummary(disbursementSummary);
       setLoading(false);
     })();
     return () => {
@@ -100,7 +103,11 @@ export default function DashboardPage() {
       render: (row) => <span className="font-mono text-xs">{truncateMiddle(row.idempotencyKey, 10)}</span>,
     },
     { key: "provider", header: "Provider" },
-    { key: "channel", header: "Channel" },
+    {
+      key: "customerName",
+      header: "Customer",
+      render: (row) => <span className="text-foreground">{row.customerName}</span>,
+    },
     {
       key: "amountRwf",
       header: "Amount",
@@ -110,7 +117,11 @@ export default function DashboardPage() {
     {
       key: "status",
       header: "Status",
-      render: (row) => <StatusBadge>{row.status}</StatusBadge>,
+      render: (row) => (
+        <StatusBadge variant={collectionStatusTone(row.status)}>
+          {collectionStatusLabel(row.status)}
+        </StatusBadge>
+      ),
     },
     {
       key: "createdAt",

@@ -118,7 +118,8 @@ export type CollectionStatus =
   | "FAILED_REFUNDED"
   | "FAILED_REFUND_ERROR"
   | "PENDING"
-  | "DEBITED";
+  | "DEBITED"
+  | "DEBIT_FAILED";
 
 export interface CollectionTransaction {
   id: string;

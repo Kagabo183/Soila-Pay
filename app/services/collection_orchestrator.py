@@ -12,6 +12,7 @@ from tenacity import (
 from app.config import Settings
 from app.db.integrator_repo import IntegratorRepo
 from app.db.transaction_log_repo import (
+    STATUS_DEBIT_FAILED,
     STATUS_DEBITED,
     STATUS_FAILED_REFUND_ERROR,
     STATUS_FAILED_REFUNDED,
@@ -100,6 +101,16 @@ class CollectionOrchestrator:
                 "and requires manual reconciliation"
             )
 
+        if status == STATUS_DEBIT_FAILED:
+            # Terminal, but no money ever moved - consistently replay the same
+            # clean error rather than a misleading "in progress" conflict.
+            # Reusing FineractError here (not raising it fresh) purely so the
+            # router's existing `except FineractError -> 502` handling applies
+            # the same way it did on the original attempt.
+            raise FineractError(
+                row["error_detail"] or "Fineract debit failed (no further detail recorded)"
+            )
+
         # PENDING or DEBITED: another request with this key is mid-flight, or a prior
         # process crashed before reaching a terminal state. Never re-execute here -
         # see the README's "known limitation" section on stuck DEBITED rows.
@@ -109,8 +120,30 @@ class CollectionOrchestrator:
         )
 
     def _response_from_row(self, row: dict) -> CollectionResponse:
+        status = row["status"]
+        # DEBITED is our own internal "wallet debited, awaiting the
+        # provider's async outcome" bookkeeping value - CollectionResponse's
+        # status was never meant to expose it (it's not in CollectionStatus's
+        # Literal at all). From a caller's perspective this is exactly the
+        # same "still waiting" state the initial synchronous response
+        # already reports as PENDING - see _mark_pending.
+        if status == STATUS_DEBITED:
+            return CollectionResponse(
+                status="PENDING",
+                idempotency_key=row["idempotency_key"],
+                fineract_savings_account_id=row["fineract_savings_account_id"],
+                debit_transaction_id=row["fineract_debit_txn_id"],
+                refund_transaction_id=row["fineract_refund_txn_id"],
+                provider_transaction_reference=row["provider_transaction_reference"],
+                amount_rwf=Decimal(row["amount_rwf"]),
+                message=(
+                    "Provider acknowledged the request but has not confirmed the "
+                    "outcome yet; it will resolve via webhook."
+                ),
+                refunded=False,
+            )
         return CollectionResponse(
-            status=row["status"],
+            status=status,
             idempotency_key=row["idempotency_key"],
             fineract_savings_account_id=row["fineract_savings_account_id"],
             debit_transaction_id=row["fineract_debit_txn_id"],
@@ -118,7 +151,7 @@ class CollectionOrchestrator:
             provider_transaction_reference=row["provider_transaction_reference"],
             amount_rwf=Decimal(row["amount_rwf"]),
             message=row["error_detail"] or "Collection already processed",
-            refunded=row["status"] == STATUS_FAILED_REFUNDED,
+            refunded=status == STATUS_FAILED_REFUNDED,
         )
 
     async def _run_sequence(
@@ -143,6 +176,11 @@ class CollectionOrchestrator:
                     error=str(exc),
                 ),
             )
+            # No money moved - mark this terminal (not left at PENDING, which
+            # _handle_existing would otherwise treat as "mid-flight" and
+            # permanently block retries with this same key behind a
+            # misleading 409). See STATUS_DEBIT_FAILED.
+            await self._repo.mark_debit_failed(idempotency_key, str(exc))
             raise
 
         await self._repo.mark_debited(idempotency_key, debit_txn_id)
@@ -341,6 +379,41 @@ class CollectionOrchestrator:
             debit_txn_id=row["fineract_debit_txn_id"],
             error_detail=error_detail,
         )
+
+    async def sync_with_provider(self, idempotency_key: str) -> Optional[CollectionResponse]:
+        """Actively asks the provider for this transaction's real, current
+        status and reconciles our local record to match - closes the gap
+        when the provider's webhook can't reach us (e.g. no public URL in
+        local dev) even though the provider itself already resolved the
+        collection. Only a DEBITED row is ever polled: PENDING means the
+        Fineract debit hasn't even run yet (nothing to ask the provider
+        about), and every other status is already terminal. A DEBITED row
+        can only exist via a provider that raises CollectionPending (the
+        dummy provider never does), so get_status() is always meaningful
+        here. No-ops (returns the row as-is) if the provider doesn't support
+        status lookups (get_status returns None) or has no record of it yet."""
+        row = await self._repo.get_by_idempotency_key(idempotency_key)
+        if row is None:
+            return None
+        if row["status"] != STATUS_DEBITED:
+            return self._response_from_row(row)
+
+        provider_status = await self._collection_provider.get_status(idempotency_key)
+        if provider_status is None:
+            return self._response_from_row(row)
+
+        if provider_status.status == "success":
+            reference = provider_status.provider_transaction_reference or idempotency_key
+            await self.resolve_provider_success(idempotency_key, reference)
+        elif provider_status.status == "failed":
+            await self.resolve_provider_failure(
+                idempotency_key,
+                provider_status.message or "Provider reported this collection as failed",
+            )
+        # "pending", or any other value: still genuinely in flight - nothing to reconcile.
+
+        row = await self._repo.get_by_idempotency_key(idempotency_key)
+        return self._response_from_row(row)
 
     async def _load_integrator(self, integrator_id) -> Optional[dict]:
         if integrator_id is None or self._integrator_repo is None:

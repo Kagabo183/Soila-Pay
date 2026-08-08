@@ -1,4 +1,3 @@
-from decimal import Decimal
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, condecimal
@@ -28,6 +27,11 @@ class CollectionResponse(BaseModel):
     debit_transaction_id: Optional[str] = None
     refund_transaction_id: Optional[str] = None
     provider_transaction_reference: Optional[str] = None
-    amount_rwf: Decimal
+    # float, not Decimal: this is the response/output side - Pydantic v2
+    # serializes Decimal to a JSON *string* (to preserve precision), which
+    # silently breaks frontend code expecting a number. CollectionRequest
+    # above (the input side) correctly keeps condecimal for validation; the
+    # orchestrator's internal math is still all Decimal.
+    amount_rwf: float
     message: str
     refunded: bool = False

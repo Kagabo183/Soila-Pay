@@ -42,17 +42,16 @@ export default function TestCollectionPage() {
 
   const selected = integrators.find((i) => i.id === selectedId) ?? null;
 
-  React.useEffect(() => {
-    // A production key can only ever be used for a real production run - if
-    // the integrator selection changes to one without an approved production
-    // key, silently keeping "production" selected would mean the next test
-    // sends an empty Integrator-Key. Snap back to sandbox instead.
-    if (selected && keyMode === "production" && !selected.productionApiKey) {
-      setKeyMode("sandbox");
-    }
-  }, [selected, keyMode]);
+  // A production key can only ever be used for a real production run - if the
+  // integrator selection changes to one without an approved production key,
+  // silently keeping "production" active would mean the next test sends an
+  // empty Integrator-Key. Derived directly during render (rather than synced
+  // via an effect) so there's no render where the mismatch is visible.
+  const effectiveKeyMode: "sandbox" | "production" =
+    keyMode === "production" && !selected?.productionApiKey ? "sandbox" : keyMode;
 
-  const activeKey = keyMode === "production" ? selected?.productionApiKey ?? "" : selected?.sandboxApiKey ?? "";
+  const activeKey =
+    effectiveKeyMode === "production" ? selected?.productionApiKey ?? "" : selected?.sandboxApiKey ?? "";
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
@@ -103,7 +102,7 @@ export default function TestCollectionPage() {
                   onClick={() => setKeyMode("sandbox")}
                   className={cn(
                     "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                    keyMode === "sandbox" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    effectiveKeyMode === "sandbox" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   Sandbox
@@ -114,7 +113,7 @@ export default function TestCollectionPage() {
                   title={selected.productionApiKey ? undefined : "This integrator has no approved production key"}
                   className={cn(
                     "rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                    keyMode === "production" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    effectiveKeyMode === "production" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   Production
@@ -137,7 +136,7 @@ export default function TestCollectionPage() {
             </div>
           )}
 
-          {keyMode === "production" && (
+          {effectiveKeyMode === "production" && (
             <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs text-warning">
               Production mode moves real money through DDIN&apos;s live collection API. Only use this
               with an amount and phone number you intend to actually charge.
@@ -147,7 +146,11 @@ export default function TestCollectionPage() {
       </Card>
 
       {selected && activeKey ? (
-        <CollectMoneyPanel key={`${selected.id}-${keyMode}`} integratorApiKey={activeKey} />
+        <CollectMoneyPanel
+          key={`${selected.id}-${effectiveKeyMode}`}
+          integratorApiKey={activeKey}
+          isSandbox={effectiveKeyMode === "sandbox"}
+        />
       ) : (
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-10 text-center text-sm text-muted-foreground">

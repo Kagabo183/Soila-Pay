@@ -42,6 +42,16 @@ class Settings(BaseSettings):
     # ASSUMPTION: only the base-URL example path was provided, not the full
     # Collection API doc section - confirm this against DDIN's real docs.
     ddin_collection_path: str = "/v1/momo/collection/initiate"
+    # NOT in any doc we were given - discovered empirically (confirmed live
+    # 2026-08-08) by probing REST-conventional paths against the sandbox.
+    # GET {this}/{referenceId} returns the real DDIN Collection record:
+    # {"success": true, "data": {"status": "success"|"failed"|"pending",
+    # "customerName": ..., "message": ..., "transactionId": ...,
+    # "operationReferenceId": ..., ...}}. Lets us actively reconcile a
+    # DEBITED (awaiting-webhook) row with DDIN's real outcome when the
+    # webhook itself can't reach us (e.g. no public URL in local dev) - see
+    # DDINCollectionProvider.get_status / CollectionOrchestrator.sync_with_provider.
+    ddin_collection_status_path: str = "/v1/momo/collection"
     # From DDIN's "Getting Started" docs (Auth & Accounts API) - lists float
     # account balances. Used only by the connection diagnostics check (see
     # app/services/ddin_diagnostics.py), not by the collection flow itself.
@@ -52,6 +62,18 @@ class Settings(BaseSettings):
     # on incoming collection.success/collection.failed webhooks. See
     # app/api/v1/webhooks.py.
     ddin_webhook_secret: str = ""
+
+    # Background reconciliation (app/main.py's _reconciliation_loop): DDIN's
+    # webhook can't reach a non-public URL (e.g. localhost in local dev), so
+    # a DEBITED (awaiting-outcome) row can otherwise sit stale forever even
+    # after DDIN itself resolved it - see
+    # CollectionOrchestrator.sync_with_provider. This periodically polls
+    # DDIN directly for every DEBITED row so the local record self-heals
+    # without anyone needing to view/click anything. Safe to disable (e.g. to
+    # avoid DDIN sandbox rate limits) - manual sync via the "Check DDIN"
+    # button and auto-sync-on-view still work either way.
+    collection_reconciliation_enabled: bool = True
+    collection_reconciliation_interval_seconds: float = 30.0
 
     # Rollback retry
     refund_max_attempts: int = 5

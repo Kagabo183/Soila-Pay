@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { toast } from "@/store/toast-store";
+import { formatTime } from "@/lib/utils";
 import type { DdinDiagnosticsResult } from "@/services/ddin-diagnostics.service";
 
 export interface LogEntry {
@@ -80,7 +81,7 @@ export function LogViewer({ runs }: { runs: DdinDiagnosticsResult[] }) {
                 {visible.map((e, i) => (
                   <tr key={i} className="border-b border-border last:border-0">
                     <td className="whitespace-nowrap py-1.5 pr-3 font-mono text-muted-foreground">
-                      {new Date(e.timestamp).toLocaleTimeString()}
+                      {formatTime(e.timestamp)}
                     </td>
                     <td className="py-1.5 pr-3">
                       <StatusBadge

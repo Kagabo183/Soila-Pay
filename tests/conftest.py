@@ -5,6 +5,7 @@ import pytest
 from app.config import Settings
 from app.exceptions import CollectionError, CollectionPending, FineractError
 from app.schemas.collection import CollectionRequest
+from app.services.collection_provider import ProviderCollectionStatus
 
 
 class FakeTransactionLogRepo:
@@ -125,6 +126,13 @@ class FakeCollectionProvider:
     FORCE_FAIL_ACCOUNT_NUMBER = "00000000000"
     PENDING_ACCOUNT_NUMBER = "99999999999"
 
+    def __init__(self):
+        # Test-controlled: what get_status(reference_id) should return for a
+        # given reference_id, keyed by that id. Absent key -> None (provider
+        # has no record of it), mirroring DDIN's real 404 behavior.
+        self.status_responses: dict[str, "ProviderCollectionStatus | None"] = {}
+        self.get_status_calls: list[str] = []
+
     async def collect(
         self, provider, customer_account_number, amount, *, reference_id=None, customer_name=None
     ):
@@ -135,6 +143,10 @@ class FakeCollectionProvider:
         if customer_account_number == self.PENDING_ACCOUNT_NUMBER:
             raise CollectionPending(operation_reference_id="OP-REF-123")
         return f"{provider}-REF-123"
+
+    async def get_status(self, reference_id):
+        self.get_status_calls.append(reference_id)
+        return self.status_responses.get(reference_id)
 
 
 class FakeIntegratorRepo:
