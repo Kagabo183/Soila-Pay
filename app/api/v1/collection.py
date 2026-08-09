@@ -19,19 +19,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def should_use_real_provider(integrator: dict) -> bool:
-    """A sandbox key runs against the safe dummy provider by default,
-    regardless of the globally configured collection provider - see
-    main.py's two orchestrators. This is what lets an integrator safely
-    test the full debit -> collect -> refund flow before ever touching a
-    production key. The one exception is a per-integrator DB flag (never a
-    hardcoded name/ID check - see db_init/008_*.sql and
-    IntegratorUpdate.sandbox_uses_real_provider): when set, even that
-    integrator's sandbox key routes through the real providers too. Off by
-    default for every integrator, including future self-service signups."""
-    return integrator["key_mode"] == "production" or bool(integrator["sandbox_uses_real_provider"])
-
-
 @router.post("/collect", response_model=None)
 async def collect_payment(
     body: CollectionRequest,
@@ -45,11 +32,7 @@ async def collect_payment(
     if not integrator["is_active"]:
         raise HTTPException(status_code=403, detail="Integrator account is disabled")
 
-    orchestrator = (
-        request.app.state.orchestrator
-        if should_use_real_provider(integrator)
-        else request.app.state.sandbox_orchestrator
-    )
+    orchestrator = request.app.state.orchestrator
 
     try:
         response = await orchestrator.execute_collection(body, idempotency_key, integrator=integrator)

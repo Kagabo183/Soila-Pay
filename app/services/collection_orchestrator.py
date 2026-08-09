@@ -29,7 +29,7 @@ from app.exceptions import (
 from app.logging_conf import structured
 from app.schemas.collection import CollectionRequest, CollectionResponse
 from app.services.collection_provider import CollectionProvider
-from app.services.fineract_client import DummyFineractClient, FineractClient
+from app.services.fineract_client import FineractClient
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class CollectionOrchestrator:
         self,
         settings: Settings,
         repo: TransactionLogRepo,
-        fineract: FineractClient | DummyFineractClient,
+        fineract: FineractClient,
         collection_provider: CollectionProvider,
         integrator_repo: Optional[IntegratorRepo] = None,
     ):

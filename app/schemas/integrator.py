@@ -26,9 +26,6 @@ class IntegratorUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1)
     fee_percentage: Optional[condecimal(gt=0, decimal_places=2)] = None
     is_active: Optional[bool] = None
-    # See IntegratorOut.sandbox_uses_real_provider - a per-integrator,
-    # admin-toggled override, off by default for everyone.
-    sandbox_uses_real_provider: Optional[bool] = None
 
 
 class IntegratorOut(BaseModel):
@@ -56,14 +53,6 @@ class IntegratorOut(BaseModel):
     # and collection_orchestrator.py) - this only affects the API response.
     fee_percentage: float
     is_active: bool
-    # When true, THIS integrator's sandbox key also routes through the real
-    # Fineract + real DDIN collection provider, not the safe internal
-    # simulator - a per-row DB flag (see db_init/008_*.sql), never hardcoded
-    # by name or ID. Off by default; intended for Soila Pay's own house
-    # account so its own test transactions are visible on DDIN's dashboard,
-    # while every other (especially self-signed-up) integrator keeps a
-    # sandbox that never touches DDIN or spends real quota.
-    sandbox_uses_real_provider: bool
     created_at: datetime
     updated_at: datetime
 

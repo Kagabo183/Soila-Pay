@@ -61,58 +61,6 @@ class CollectionProvider(ABC):
         """Override if the provider owns a resource (e.g. an httpx.AsyncClient) to release."""
 
 
-class DummyCollectionProvider(CollectionProvider):
-    """
-    Local stand-in for a real collection provider integration.
-
-    Simulates the call in-process (latency only, no second container required).
-    Use `FORCE_FAIL_ACCOUNT_NUMBER` as the customer account number to
-    deliberately trigger a failure and exercise the rollback path - this is
-    what the Bruno "Forced Failure" request uses, and it's the only reliable
-    way to test the refund path without depending on DDIN's sandbox rejecting
-    a specific account number on demand.
-
-    Selected via COLLECTION_PROVIDER_NAME=dummy (see get_collection_provider below).
-    """
-
-    FORCE_FAIL_ACCOUNT_NUMBER = "00000000000"
-
-    def __init__(self, settings: Settings):
-        self._settings = settings
-
-    async def collect(
-        self,
-        provider: str,
-        customer_account_number: str,
-        amount: Decimal,
-        *,
-        reference_id: Optional[str] = None,
-        customer_name: Optional[str] = None,
-    ) -> str:
-        await asyncio.sleep(self._settings.collection_dummy_latency_seconds)
-
-        if customer_account_number == self.FORCE_FAIL_ACCOUNT_NUMBER:
-            logger.warning(
-                "collection_forced_failure",
-                extra={"provider": provider, "customer_account_number": customer_account_number},
-            )
-            raise CollectionError(
-                f"Collection provider {provider} rejected account {customer_account_number} "
-                "(forced failure for testing)"
-            )
-
-        reference = f"{provider}-{uuid.uuid4().hex[:12].upper()}"
-        logger.info(
-            "collection_success",
-            extra={
-                "provider": provider,
-                "customer_account_number": customer_account_number,
-                "reference": reference,
-            },
-        )
-        return reference
-
-
 class _DDINUnauthorizedError(Exception):
     """Internal signal: the collection dispatch got a 401. Never escapes this module."""
 
@@ -553,6 +501,4 @@ class DDINCollectionProvider(CollectionProvider):
 def get_collection_provider(settings: Settings) -> CollectionProvider:
     if settings.collection_provider_name == "ddin":
         return DDINCollectionProvider(settings)
-    if settings.collection_provider_name == "dummy":
-        return DummyCollectionProvider(settings)
     raise ValueError(f"Unknown collection_provider_name: {settings.collection_provider_name}")

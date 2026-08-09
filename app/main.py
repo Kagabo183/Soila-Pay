@@ -22,8 +22,8 @@ from app.db.integrator_repo import IntegratorRepo
 from app.db.transaction_log_repo import TransactionLogRepo
 from app.logging_conf import configure_logging
 from app.services.collection_orchestrator import CollectionOrchestrator
-from app.services.collection_provider import DummyCollectionProvider, get_collection_provider
-from app.services.fineract_client import DummyFineractClient, FineractClient
+from app.services.collection_provider import get_collection_provider
+from app.services.fineract_client import FineractClient
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -63,18 +63,10 @@ async def _reconciliation_loop(app: FastAPI, interval_seconds: float) -> None:
 async def lifespan(app: FastAPI):
     pool = await create_pool(settings)
     fineract_client = FineractClient(settings)
-    # Sandbox-key traffic never touches the real (external, not part of this
-    # repo) Fineract deployment - see DummyFineractClient's docstring.
-    sandbox_fineract_client = DummyFineractClient(settings)
     repo = TransactionLogRepo(pool)
     integrator_repo = IntegratorRepo(pool)
     integrator_document_repo = IntegratorDocumentRepo(pool)
     collection_provider = get_collection_provider(settings)
-    # Sandbox-key traffic always runs against the dummy provider, regardless
-    # of COLLECTION_PROVIDER_NAME, so integrators can safely test the full
-    # debit -> collect -> refund flow before earning a production key - see
-    # app/api/v1/collection.py's key_mode routing.
-    sandbox_collection_provider = DummyCollectionProvider(settings)
 
     app.state.db_pool = pool
     app.state.fineract_client = fineract_client
@@ -87,13 +79,6 @@ async def lifespan(app: FastAPI):
         repo=repo,
         fineract=fineract_client,
         collection_provider=collection_provider,
-        integrator_repo=integrator_repo,
-    )
-    app.state.sandbox_orchestrator = CollectionOrchestrator(
-        settings=settings,
-        repo=repo,
-        fineract=sandbox_fineract_client,
-        collection_provider=sandbox_collection_provider,
         integrator_repo=integrator_repo,
     )
 
@@ -137,9 +122,7 @@ async def lifespan(app: FastAPI):
             with suppress(asyncio.CancelledError):
                 await reconciliation_task
         await fineract_client.aclose()
-        await sandbox_fineract_client.aclose()
         await collection_provider.aclose()
-        await sandbox_collection_provider.aclose()
         await close_pool(pool)
         logger.info("shutdown_complete")
 

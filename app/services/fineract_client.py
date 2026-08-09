@@ -1,6 +1,4 @@
-import asyncio
 import logging
-import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -121,35 +119,3 @@ class FineractClient:
         return str(transaction_id)
 
 
-class DummyFineractClient:
-    """
-    Local stand-in for FineractClient, used only for sandbox-key traffic (see
-    app.state.sandbox_orchestrator in main.py) - the same role
-    DummyCollectionProvider plays for DDIN. Apache Fineract is a separate,
-    external core-banking platform (not part of this repo) that has to be run
-    on its own; without it reachable at FINERACT_BASE_URL, every collection -
-    sandbox or production - fails at the debit step before ever reaching
-    DDIN. This lets a sandbox key exercise the full debit -> collect -> refund
-    flow locally, exactly like the dummy DDIN provider does, without standing
-    up Fineract. Production traffic always uses the real FineractClient above.
-    """
-
-    def __init__(self, settings: Settings):
-        self._settings = settings
-
-    async def aclose(self) -> None:
-        return None
-
-    async def get_account_balance(self, account_id: str) -> Decimal:
-        await asyncio.sleep(self._settings.collection_dummy_latency_seconds)
-        return Decimal("999999")
-
-    async def withdraw(self, account_id: str, amount: Decimal, note: str) -> str:
-        return await self._transact()
-
-    async def deposit(self, account_id: str, amount: Decimal, note: str) -> str:
-        return await self._transact()
-
-    async def _transact(self) -> str:
-        await asyncio.sleep(self._settings.collection_dummy_latency_seconds)
-        return f"SANDBOX-FIN-{uuid.uuid4().hex[:10].upper()}"
