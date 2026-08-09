@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 EVENT_COLLECTION_SUCCESS = "collection.success"
 EVENT_COLLECTION_FAILED = "collection.failed"
+EVENT_COLLECTION_PENDING = "collection.pending"
 
 
 def _build_payload(event: str, row: dict) -> dict:

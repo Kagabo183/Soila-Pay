@@ -209,7 +209,10 @@ class CollectionOrchestrator:
                 customer_name=req.customer_name,
             )
         except CollectionPending as exc:
-            return await self._mark_pending(idempotency_key, req, debit_txn_id, exc)
+            return await self._mark_pending(
+                idempotency_key, req, debit_txn_id, exc,
+                integrator_id=integrator["id"] if integrator else None,
+            )
         except CollectionError as exc:
             return await self._rollback(
                 fineract_savings_account_id=req.fineract_savings_account_id,
@@ -296,6 +299,7 @@ class CollectionOrchestrator:
         req: CollectionRequest,
         debit_txn_id: str,
         pending: CollectionPending,
+        integrator_id: int | None = None,
     ) -> CollectionResponse:
         await self._repo.mark_provider_pending(idempotency_key, pending.operation_reference_id)
         logger.info(
@@ -307,6 +311,8 @@ class CollectionOrchestrator:
                 operation_reference_id=pending.operation_reference_id,
             ),
         )
+        pending_row = await self._repo.get_by_idempotency_key(idempotency_key)
+        self._fire_webhooks(integrator_id, webhook_dispatcher.EVENT_COLLECTION_PENDING, pending_row or {})
         return CollectionResponse(
             status="PENDING",
             idempotency_key=idempotency_key,

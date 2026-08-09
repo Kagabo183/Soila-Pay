@@ -22,6 +22,12 @@ const EVENT_OPTIONS = [
     desc: "Fired when a collection fails (refunded or refund error).",
     tone: "destructive" as const,
   },
+  {
+    id: "collection.pending",
+    label: "collection.pending",
+    desc: "Fired when a collection is acknowledged but awaiting the provider's final result.",
+    tone: "warning" as const,
+  },
 ];
 
 function CopyButton({ text }: { text: string }) {
@@ -48,7 +54,7 @@ export default function WebhooksPage() {
 
   const [url, setUrl] = React.useState("");
   const [events, setEvents] = React.useState<Set<string>>(
-    new Set(["collection.success", "collection.failed"])
+    new Set(["collection.success", "collection.failed", "collection.pending"])
   );
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -295,7 +301,13 @@ export default function WebhooksPage() {
                         {wh.events.map((ev) => (
                           <StatusBadge
                             key={ev}
-                            variant={ev === "collection.success" ? "success" : "destructive"}
+                            variant={
+                              ev === "collection.success"
+                                ? "success"
+                                : ev === "collection.pending"
+                                ? "warning"
+                                : "destructive"
+                            }
                           >
                             {ev}
                           </StatusBadge>
