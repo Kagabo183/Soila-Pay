@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Zap, Lock, User as UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -104,6 +105,12 @@ export default function LoginPage() {
             </Button>
           </form>
         </Card>
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          New integrator?{" "}
+          <Link href="/portal/signup" className="font-medium text-primary hover:underline">
+            Create an account
+          </Link>
+        </p>
       </div>
     </div>
   );

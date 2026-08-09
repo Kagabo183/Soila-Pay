@@ -216,16 +216,14 @@ interface CollectMoneyPanelProps {
    * production from here); the admin Test Collection page can pass either,
    * depending on the operator's selection. */
   isSandbox?: boolean;
+  /** Pre-populate the Fineract savings account ID from the integrator's saved
+   * account settings so they don't have to retype it every collection. */
+  defaultFineractAccountId?: string;
 }
 
-export function CollectMoneyPanel({ integratorApiKey, isSandbox = true }: CollectMoneyPanelProps) {
+export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultFineractAccountId = "1" }: CollectMoneyPanelProps) {
   const [provider, setProvider] = React.useState<"MTN" | "AIRTEL">("MTN");
-  // Was hardcoded to "12345" (a leftover placeholder) with no way to change
-  // it - meaning every test, sandbox or production, silently debited a
-  // Fineract account that only exists by coincidence in sandbox mode's fake
-  // simulator. Now a real field, defaulting to whichever account is actually
-  // funded in the connected Fineract instance.
-  const [fineractSavingsAccountId, setFineractSavingsAccountId] = React.useState("1");
+  const [fineractSavingsAccountId, setFineractSavingsAccountId] = React.useState(defaultFineractAccountId);
   const [accountNumber, setAccountNumber] = React.useState("0788123456");
   const [customerName, setCustomerName] = React.useState("KALISA John");
   const [amount, setAmount] = React.useState("2000");
