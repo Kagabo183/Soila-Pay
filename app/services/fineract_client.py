@@ -52,6 +52,22 @@ class FineractClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    async def get_account_balance(self, account_id: str) -> Decimal:
+        try:
+            resp = await self._client.get(f"/savingsaccounts/{account_id}")
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise FineractError(
+                f"Fineract get balance failed ({exc.response.status_code}): {exc.response.text}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise FineractError(f"Fineract get balance transport error: {exc}") from exc
+        data = resp.json()
+        balance = data.get("summary", {}).get("accountBalance")
+        if balance is None:
+            raise FineractError(f"Fineract balance response missing 'summary.accountBalance': {data}")
+        return Decimal(str(balance))
+
     async def withdraw(self, account_id: str, amount: Decimal, note: str) -> str:
         return await self._transact(account_id, amount, note, command="withdrawal")
 
@@ -123,6 +139,10 @@ class DummyFineractClient:
 
     async def aclose(self) -> None:
         return None
+
+    async def get_account_balance(self, account_id: str) -> Decimal:
+        await asyncio.sleep(self._settings.collection_dummy_latency_seconds)
+        return Decimal("999999")
 
     async def withdraw(self, account_id: str, amount: Decimal, note: str) -> str:
         return await self._transact()

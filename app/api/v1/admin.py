@@ -4,7 +4,9 @@ from decimal import Decimal
 import pymysql
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
+from app.exceptions import FineractError
 from app.schemas.integrator import (
     DdinCostSetting,
     DocumentType,
@@ -134,3 +136,30 @@ async def update_ddin_cost_percentage(body: DdinCostSetting, request: Request):
         "ddin_cost_percentage", str(body.ddin_cost_percentage)
     )
     return body
+
+
+class FineractTopupRequest(BaseModel):
+    account_id: str = Field(..., min_length=1)
+    amount_rwf: Decimal = Field(..., gt=0)
+
+
+@router.get("/fineract/balance/{account_id}")
+async def fineract_get_balance(account_id: str, request: Request):
+    """Get the current balance of a Fineract savings account (the float/ledger account)."""
+    try:
+        balance = await request.app.state.fineract_client.get_account_balance(account_id)
+        return {"account_id": account_id, "balance_rwf": float(balance)}
+    except FineractError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/fineract/topup")
+async def fineract_topup(body: FineractTopupRequest, request: Request):
+    """Deposit funds into a Fineract savings account to top up the collection float."""
+    try:
+        tx_id = await request.app.state.fineract_client.deposit(
+            body.account_id, body.amount_rwf, "Admin top-up via console"
+        )
+        return {"transaction_id": tx_id, "account_id": body.account_id, "amount_rwf": float(body.amount_rwf)}
+    except FineractError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

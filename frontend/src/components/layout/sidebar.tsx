@@ -11,6 +11,7 @@ import {
   Radio,
   Send,
   Zap,
+  Wallet,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -36,6 +37,7 @@ const NAV_SECTIONS = [
       { href: "/settings/integrators", label: "Integrators & Margin", icon: Users },
       { href: "/settings/test-collection", label: "Test Collection", icon: Send },
       { href: "/settings/ddin-diagnostics", label: "DDIN Diagnostics", icon: Radio },
+      { href: "/settings/fineract", label: "Fineract Float", icon: Wallet },
     ],
   },
 ];

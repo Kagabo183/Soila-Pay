@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
     sandbox_collection_provider = DummyCollectionProvider(settings)
 
     app.state.db_pool = pool
+    app.state.fineract_client = fineract_client
     app.state.transaction_log_repo = repo
     app.state.integrator_repo = integrator_repo
     app.state.integrator_document_repo = integrator_document_repo
