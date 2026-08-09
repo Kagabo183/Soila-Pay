@@ -202,7 +202,11 @@ export default function WebhooksPage() {
                       >
                         <div className="flex items-center gap-2.5">
                           <span className={`h-2 w-2 rounded-full ${
-                            ev.tone === "success" ? "bg-success" : "bg-destructive"
+                            ev.tone === "success"
+                              ? "bg-success"
+                              : ev.tone === "warning"
+                              ? "bg-warning"
+                              : "bg-destructive"
                           }`} />
                           <span className="font-mono text-xs font-medium text-foreground">{ev.label}</span>
                         </div>

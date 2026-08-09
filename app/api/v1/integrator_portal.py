@@ -217,9 +217,6 @@ async def list_transactions(
 # Webhook subscriptions
 # ---------------------------------------------------------------------------
 
-VALID_EVENTS = {"collection.success", "collection.failed"}
-
-
 class WebhookCreate(BaseModel):
     callback_url: HttpUrl
     events: list[Literal["collection.success", "collection.failed", "collection.pending"]]
