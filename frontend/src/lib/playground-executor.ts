@@ -85,7 +85,6 @@ export async function executePlaygroundRequest(
       headers: {
         "content-type": "application/json",
         "x-request-id": `req_${Date.now().toString(36)}`,
-        "x-mock-mode": "true",
       },
       body: responseBody,
     };

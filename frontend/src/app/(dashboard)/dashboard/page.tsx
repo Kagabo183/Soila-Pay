@@ -9,6 +9,7 @@ import {
   Timer,
   Smartphone,
   Landmark,
+  Clock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
@@ -20,7 +21,6 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Pagination } from "@/components/ui/pagination";
 import { SearchInput } from "@/components/ui/search-input";
 import { collectionService } from "@/services/collection.service";
-import { disbursementService } from "@/services/disbursement.service";
 import { providerService } from "@/services/provider.service";
 import { formatCurrency, formatNumber, formatDateTime, truncateMiddle } from "@/lib/utils";
 import { collectionStatusLabel, collectionStatusTone } from "@/lib/collection-status";
@@ -43,7 +43,6 @@ export default function DashboardPage() {
     totalAmount: 0,
     successRate: 0,
   });
-  const [disbursementSummary, setDisbursementSummary] = React.useState({ count: 0, totalAmount: 0 });
 
   const [tableLoading, setTableLoading] = React.useState(true);
   const [rows, setRows] = React.useState<CollectionTransaction[]>([]);
@@ -55,17 +54,15 @@ export default function DashboardPage() {
   React.useEffect(() => {
     let mounted = true;
     (async () => {
-      const [p, s, collectionSummary, disbursementSummary] = await Promise.all([
+      const [p, s, collectionSummary] = await Promise.all([
         providerService.list(),
         providerService.dailyVolumeSeries(14),
         collectionService.summaryToday(),
-        disbursementService.summaryToday(),
       ]);
       if (!mounted) return;
       setProviders(p);
       setSeries(s);
       setCollectionSummary(collectionSummary);
-      setDisbursementSummary(disbursementSummary);
       setLoading(false);
     })();
     return () => {
@@ -160,40 +157,36 @@ export default function DashboardPage() {
             <StatCard
               label="Collections Today"
               value={formatCurrency(collectionSummary.totalAmount)}
-              change={4.2}
-              changeLabel="vs yesterday"
               icon={Wallet}
               accent="primary"
             />
-            <StatCard
-              label="Disbursements Today"
-              value={formatCurrency(disbursementSummary.totalAmount)}
-              change={-1.8}
-              changeLabel="vs yesterday"
-              icon={Send}
-              accent="primary"
-            />
+            <div className="flex flex-col gap-2 rounded-xl border border-dashed border-border bg-secondary/30 p-4">
+              <div className="flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                  <Send className="h-4 w-4" />
+                </span>
+                <span className="text-xs font-medium text-muted-foreground">Disbursements</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold text-muted-foreground">Coming Soon</span>
+              </div>
+            </div>
             <StatCard
               label="Success Rate"
               value={`${collectionSummary.successRate}%`}
-              change={0.6}
-              changeLabel="7-day trend"
               icon={CheckCircle2}
               accent="success"
             />
             <StatCard
               label="Failed Rate"
               value={`${failedRate.toFixed(1)}%`}
-              change={-0.3}
-              changeLabel="7-day trend"
               icon={XCircle}
               accent="destructive"
             />
             <StatCard
               label="Avg Processing Time"
               value={`${avgProcessingMs}ms`}
-              change={-5.1}
-              changeLabel="vs last week"
               icon={Timer}
               accent="warning"
             />
@@ -248,10 +241,8 @@ export default function DashboardPage() {
                         </p>
                       </div>
                       <div>
-                        <p className="text-muted-foreground">Disbursements today</p>
-                        <p className="text-sm font-semibold text-foreground">
-                          {formatNumber(provider.disbursementsToday)}
-                        </p>
+                        <p className="text-muted-foreground">Disbursements</p>
+                        <p className="text-sm font-semibold text-muted-foreground">Coming Soon</p>
                       </div>
                     </div>
                   </Card>
@@ -264,7 +255,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Collections vs Disbursements (14 days)</CardTitle>
+            <CardTitle>Collections (14 days)</CardTitle>
             <CardDescription>Daily transaction volume across all providers</CardDescription>
           </CardHeader>
           <CardContent>
@@ -276,7 +267,6 @@ export default function DashboardPage() {
                 xKey="date"
                 series={[
                   { key: "collections", label: "Collections", color: "#4f46e5" },
-                  { key: "disbursements", label: "Disbursements", color: "#16a34a" },
                   { key: "failed", label: "Failed", color: "#dc2626" },
                 ]}
               />

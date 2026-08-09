@@ -262,11 +262,11 @@ export default function DeveloperPortalPage() {
               Disbursement API
             </SectionHeading>
             <div className="flex items-center gap-2">
-              <StatusBadge variant="outline">Placeholder</StatusBadge>
+              <StatusBadge variant="warning">Coming Soon</StatusBadge>
               <p className="text-xs text-muted-foreground">
-                Not yet implemented in the production middleware - shape shown for forward
-                compatibility. <code className="rounded bg-secondary px-1 py-0.5 font-mono">services/disbursement.service.ts</code> already
-                mocks this contract.
+                The disbursement API is under development and will allow you to send money directly
+                to mobile money accounts. The contract below shows the planned request/response
+                shape — it is not yet live.
               </p>
             </div>
             <CodeBlock code={DISBURSEMENT_SHAPE} lang="js" filename="Planned contract" />
