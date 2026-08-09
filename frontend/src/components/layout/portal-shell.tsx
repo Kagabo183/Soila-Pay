@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Zap, LayoutDashboard, Send, Rocket, UserCog, LogOut, History } from "lucide-react";
+import { Zap, LayoutDashboard, Send, Rocket, UserCog, LogOut, History, Code2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useIntegratorPortalStore } from "@/store/integrator-portal-store";
 
@@ -10,6 +10,7 @@ const NAV = [
   { href: "/portal/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/portal/collections", label: "Collections", icon: Send },
   { href: "/portal/transactions", label: "Transactions", icon: History },
+  { href: "/portal/dev-tools", label: "Dev Tools", icon: Code2 },
   { href: "/portal/go-live", label: "Go Live", icon: Rocket },
   { href: "/portal/account", label: "Account", icon: UserCog },
 ];
