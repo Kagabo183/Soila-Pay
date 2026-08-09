@@ -18,6 +18,7 @@ class IntegratorCreate(BaseModel):
     # self-service portal login credentials (POST /api/v1/integrator-portal/login)
     # instead of making them sign up themselves at /portal/signup.
     phone_number: Optional[str] = Field(default=None, min_length=8, max_length=20)
+    email: Optional[str] = Field(default=None, max_length=255)
     password: Optional[str] = Field(default=None, min_length=8)
 
 
@@ -38,6 +39,7 @@ class IntegratorOut(BaseModel):
     production_status: ProductionStatus
     production_rejection_reason: Optional[str] = None
     phone_number: Optional[str] = None
+    email: Optional[str] = None
     business_location: Optional[str] = None
     # Filenames of the uploaded documents (for quick display without a join) -
     # the actual file bytes live in integrator_documents, fetched via
@@ -91,12 +93,12 @@ class DdinCostSetting(BaseModel):
 
 class IntegratorSignupRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Business or contact name")
-    phone_number: str = Field(..., min_length=8, max_length=20)
+    email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=8)
 
 
 class IntegratorLoginRequest(BaseModel):
-    phone_number: str = Field(..., min_length=8, max_length=20)
+    email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=1)
 
 

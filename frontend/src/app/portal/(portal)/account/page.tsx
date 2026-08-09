@@ -42,8 +42,8 @@ export default function PortalAccountPage() {
             <p className="mt-0.5 font-medium text-foreground">{integrator.name}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Phone number</p>
-            <p className="mt-0.5 font-medium text-foreground">{integrator.phoneNumber ?? "—"}</p>
+            <p className="text-xs text-muted-foreground">Email</p>
+            <p className="mt-0.5 font-medium text-foreground">{integrator.email ?? "—"}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Fee percentage</p>

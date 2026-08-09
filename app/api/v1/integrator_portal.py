@@ -47,19 +47,17 @@ async def _current_integrator(request: Request, authorization: str = Header(...)
 
 @router.post("/signup", response_model=IntegratorSessionResponse, status_code=201)
 async def signup(body: IntegratorSignupRequest, request: Request):
-    """Sandbox-only signup - mirrors how DDIN itself onboarded Soila Pay: just
-    a phone number to start testing immediately. Going live requires
-    POST /production/submit and admin approval - see the README's
-    "Integrator self-service portal" section."""
+    """Sandbox-only signup - register with email to start testing immediately.
+    Going live requires POST /production/submit and admin approval."""
     repo = request.app.state.integrator_repo
     try:
         integrator = await repo.create_self_signup(
-            body.name, body.phone_number, hash_password(body.password)
+            body.name, body.email, hash_password(body.password)
         )
     except pymysql.err.IntegrityError as exc:
-        if exc.args and exc.args[0] == 1062:  # duplicate phone_number
+        if exc.args and exc.args[0] == 1062:  # duplicate email
             raise HTTPException(
-                status_code=409, detail="An account with this phone number already exists"
+                status_code=409, detail="An account with this email already exists"
             ) from exc
         raise
 
@@ -70,11 +68,11 @@ async def signup(body: IntegratorSignupRequest, request: Request):
 @router.post("/login", response_model=IntegratorSessionResponse)
 async def login(body: IntegratorLoginRequest, request: Request):
     repo = request.app.state.integrator_repo
-    integrator = await repo.get_by_phone_number(body.phone_number)
+    integrator = await repo.get_by_email(body.email)
     if integrator is None or not integrator.get("password_hash"):
-        raise HTTPException(status_code=401, detail="Invalid phone number or password")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     if not verify_password(body.password, integrator["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid phone number or password")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = create_session_token(integrator["id"], settings.integrator_session_secret)
     return IntegratorSessionResponse(token=token, integrator=integrator)

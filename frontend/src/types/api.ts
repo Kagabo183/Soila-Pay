@@ -288,6 +288,7 @@ export interface Integrator {
   productionApiKey: string | null;
   productionStatus: ProductionStatus;
   productionRejectionReason: string | null;
+  email: string | null;
   phoneNumber: string | null;
   businessLocation: string | null;
   taxClearanceReference: string | null;
@@ -329,18 +330,18 @@ export interface IntegratorSummary {
 // ---------------------------------------------------------------------------
 // Integrator self-service portal (app/api/v1/integrator_portal.py) - separate
 // from the superadmin console's own auth (auth.service.ts / auth-store.ts).
-// An integrator signs up with just a phone number to start testing in
-// sandbox immediately, then submits KYC to unlock a production key.
+// An integrator signs up with email to start testing in sandbox immediately,
+// then submits KYC to unlock a production key.
 // ---------------------------------------------------------------------------
 
 export interface IntegratorSignupPayload {
   name: string;
-  phoneNumber: string;
+  email: string;
   password: string;
 }
 
 export interface IntegratorLoginPayload {
-  phoneNumber: string;
+  email: string;
   password: string;
 }
 

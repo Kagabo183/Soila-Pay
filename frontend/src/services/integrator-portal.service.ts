@@ -19,6 +19,7 @@ function integratorFromApi(row: {
   production_api_key: string | null;
   production_status: Integrator["productionStatus"];
   production_rejection_reason: string | null;
+  email: string | null;
   phone_number: string | null;
   business_location: string | null;
   tax_clearance_reference: string | null;
@@ -36,6 +37,7 @@ function integratorFromApi(row: {
     productionApiKey: row.production_api_key,
     productionStatus: row.production_status,
     productionRejectionReason: row.production_rejection_reason,
+    email: row.email,
     phoneNumber: row.phone_number,
     businessLocation: row.business_location,
     taxClearanceReference: row.tax_clearance_reference,
@@ -73,7 +75,7 @@ interface MockAccount {
 // every other mock service in this codebase makes. The persisted
 // integrator-portal-store (localStorage) is what actually survives reloads.
 // Seeded with one demo account so /portal/login has a real credential to
-// test with out of the box - phone 0788000111 / password Sandbox1234.
+// test with out of the box - email demo@soila.rw / password Sandbox1234.
 const DEMO_ACCOUNT_CREATED_AT = new Date().toISOString();
 const MOCK_ACCOUNTS: MockAccount[] = [
   {
@@ -84,7 +86,8 @@ const MOCK_ACCOUNTS: MockAccount[] = [
       productionApiKey: null,
       productionStatus: "NOT_SUBMITTED",
       productionRejectionReason: null,
-      phoneNumber: "0788000111",
+      email: "demo@soila.rw",
+      phoneNumber: null,
       businessLocation: null,
       taxClearanceReference: null,
       rdbCertificateReference: null,
@@ -110,12 +113,12 @@ function mockAccountForToken(token: string): MockAccount {
 }
 
 export const integratorPortalService = {
-  /** POST /api/v1/integrator-portal/signup - sandbox-only, just a phone number to start. */
+  /** POST /api/v1/integrator-portal/signup - sandbox-only, register with email. */
   async signup(payload: IntegratorSignupPayload): Promise<IntegratorSession> {
     if (MOCK_MODE) {
       await simulateLatency(400, 800);
-      if (MOCK_ACCOUNTS.some((a) => a.integrator.phoneNumber === payload.phoneNumber)) {
-        throw new Error("An account with this phone number already exists");
+      if (MOCK_ACCOUNTS.some((a) => a.integrator.email === payload.email)) {
+        throw new Error("An account with this email already exists");
       }
       const now = new Date().toISOString();
       const integrator: Integrator = {
@@ -125,7 +128,8 @@ export const integratorPortalService = {
         productionApiKey: null,
         productionStatus: "NOT_SUBMITTED",
         productionRejectionReason: null,
-        phoneNumber: payload.phoneNumber,
+        email: payload.email,
+        phoneNumber: null,
         businessLocation: null,
         taxClearanceReference: null,
         rdbCertificateReference: null,
@@ -140,7 +144,7 @@ export const integratorPortalService = {
     }
     const { data } = await apiClient.post("/api/v1/integrator-portal/signup", {
       name: payload.name,
-      phone_number: payload.phoneNumber,
+      email: payload.email,
       password: payload.password,
     });
     return { token: data.token, integrator: integratorFromApi(data.integrator) };
@@ -150,14 +154,14 @@ export const integratorPortalService = {
   async login(payload: IntegratorLoginPayload): Promise<IntegratorSession> {
     if (MOCK_MODE) {
       await simulateLatency(300, 700);
-      const account = MOCK_ACCOUNTS.find((a) => a.integrator.phoneNumber === payload.phoneNumber);
+      const account = MOCK_ACCOUNTS.find((a) => a.integrator.email === payload.email);
       if (!account || account.password !== payload.password) {
-        throw new Error("Invalid phone number or password");
+        throw new Error("Invalid email or password");
       }
       return { token: mockToken(account.integrator.id), integrator: account.integrator };
     }
     const { data } = await apiClient.post("/api/v1/integrator-portal/login", {
-      phone_number: payload.phoneNumber,
+      email: payload.email,
       password: payload.password,
     });
     return { token: data.token, integrator: integratorFromApi(data.integrator) };

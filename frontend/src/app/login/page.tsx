@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Zap, Lock, User as UserIcon } from "lucide-react";
+import { Zap, Lock, AtSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -50,7 +50,7 @@ export default function LoginPage() {
     // Try integrator portal auth
     try {
       const { token, integrator } = await integratorPortalService.login({
-        phoneNumber: identifier.trim(),
+        email: identifier.trim(),
         password,
       });
       setPortalSession(token, integrator);
@@ -79,10 +79,10 @@ export default function LoginPage() {
         <Card className="p-6">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <Input
-              label="Username or phone number"
+              label="Username or email"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              leftIcon={<UserIcon className="h-4 w-4" />}
+              leftIcon={<AtSign className="h-4 w-4" />}
               autoComplete="username"
               required
             />

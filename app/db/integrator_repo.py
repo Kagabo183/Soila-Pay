@@ -31,6 +31,14 @@ class IntegratorRepo:
                 )
                 return await cur.fetchone()
 
+    async def get_by_email(self, email: str) -> Optional[dict]:
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT * FROM integrators WHERE email = %s", (email,)
+                )
+                return await cur.fetchone()
+
     async def get_by_api_key(self, api_key: str) -> Optional[dict]:
         """Matches either sandbox_api_key or production_api_key. The returned
         dict carries a synthetic `key_mode` ("sandbox"|"production") so the
@@ -64,9 +72,10 @@ class IntegratorRepo:
         fee_percentage: Decimal = DEFAULT_INTEGRATOR_FEE_PERCENTAGE,
         *,
         phone_number: Optional[str] = None,
+        email: Optional[str] = None,
         password_hash: Optional[str] = None,
     ) -> dict:
-        """Admin-created integrator. phone_number/password_hash are optional -
+        """Admin-created integrator. email/password_hash are optional -
         set both together to also hand the integrator working self-service
         portal login credentials (app/api/v1/integrator_portal.py) instead of
         making them sign up themselves."""
@@ -76,10 +85,10 @@ class IntegratorRepo:
                 await cur.execute(
                     """
                     INSERT INTO integrators
-                        (name, phone_number, password_hash, sandbox_api_key, fee_percentage)
-                    VALUES (%s, %s, %s, %s, %s)
+                        (name, phone_number, email, password_hash, sandbox_api_key, fee_percentage)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (name, phone_number, password_hash, sandbox_api_key, str(fee_percentage)),
+                    (name, phone_number, email, password_hash, sandbox_api_key, str(fee_percentage)),
                 )
                 new_id = cur.lastrowid
         return await self.get_by_id(new_id)
@@ -87,7 +96,7 @@ class IntegratorRepo:
     async def create_self_signup(
         self,
         name: str,
-        phone_number: str,
+        email: str,
         password_hash: str,
         fee_percentage: Decimal = DEFAULT_INTEGRATOR_FEE_PERCENTAGE,
     ) -> dict:
@@ -95,7 +104,7 @@ class IntegratorRepo:
         sandbox immediately (mirrors how DDIN itself onboarded us). Production
         access requires a separate KYC submission - see submit_production_kyc."""
         return await self.create(
-            name, fee_percentage, phone_number=phone_number, password_hash=password_hash
+            name, fee_percentage, email=email, password_hash=password_hash
         )
 
     async def update(

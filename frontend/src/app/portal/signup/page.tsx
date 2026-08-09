@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Zap, Lock, User as UserIcon, Phone, ShieldCheck } from "lucide-react";
+import { Zap, Lock, User as UserIcon, AtSign, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -16,7 +16,7 @@ export default function IntegratorSignupPage() {
   const setSession = useIntegratorPortalStore((s) => s.setSession);
   const isAuthenticated = useIntegratorPortalStore((s) => s.isAuthenticated);
   const [name, setName] = React.useState("");
-  const [phoneNumber, setPhoneNumber] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -32,7 +32,7 @@ export default function IntegratorSignupPage() {
     try {
       const { token, integrator } = await integratorPortalService.signup({
         name,
-        phoneNumber,
+        email,
         password,
       });
       setSession(token, integrator);
@@ -54,7 +54,7 @@ export default function IntegratorSignupPage() {
           </span>
           <h1 className="text-lg font-semibold text-foreground">Become a Soila Pay Integrator</h1>
           <p className="text-sm text-muted-foreground">
-            Sign up with your phone number and start testing collections in sandbox right away.
+            Sign up with your email and start testing collections in sandbox right away.
           </p>
         </div>
 
@@ -69,12 +69,13 @@ export default function IntegratorSignupPage() {
               required
             />
             <Input
-              label="Phone number"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              leftIcon={<Phone className="h-4 w-4" />}
-              placeholder="0788123456"
-              autoComplete="tel"
+              label="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              leftIcon={<AtSign className="h-4 w-4" />}
+              placeholder="you@company.com"
+              autoComplete="email"
               required
             />
             <Input

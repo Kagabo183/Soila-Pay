@@ -224,8 +224,8 @@ interface CollectMoneyPanelProps {
 export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultFineractAccountId = "1" }: CollectMoneyPanelProps) {
   const [provider, setProvider] = React.useState<"MTN" | "AIRTEL">("MTN");
   const [fineractSavingsAccountId, setFineractSavingsAccountId] = React.useState(defaultFineractAccountId);
-  const [accountNumber, setAccountNumber] = React.useState("0788123456");
-  const [customerName, setCustomerName] = React.useState("KALISA John");
+  const [accountNumber, setAccountNumber] = React.useState("");
+  const [customerName, setCustomerName] = React.useState("");
   const [amount, setAmount] = React.useState("2000");
   const [referenceId, setReferenceId] = React.useState(generateReferenceId);
   const [running, setRunning] = React.useState(false);
@@ -597,8 +597,8 @@ export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultF
             hint="The account being debited. Must be an active, funded account in the connected Fineract instance."
             required
           />
-          <Input label="Customer name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} required />
-          <Input label="Customer account number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} required />
+          <Input label="Customer name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="KALISA John" required />
+          <Input label="Customer account number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} placeholder="0788123456" required />
           <Input label="Amount (RWF)" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
 
           <div>
