@@ -26,6 +26,7 @@ function fromApi(row: {
   production_api_key: string | null;
   production_status: Integrator["productionStatus"];
   production_rejection_reason: string | null;
+  email: string | null;
   phone_number: string | null;
   business_location: string | null;
   tax_clearance_reference: string | null;
@@ -43,6 +44,7 @@ function fromApi(row: {
     productionApiKey: row.production_api_key,
     productionStatus: row.production_status,
     productionRejectionReason: row.production_rejection_reason,
+    email: row.email,
     phoneNumber: row.phone_number,
     businessLocation: row.business_location,
     taxClearanceReference: row.tax_clearance_reference,
@@ -108,6 +110,7 @@ export const integratorsService = {
         productionApiKey: null,
         productionStatus: "NOT_SUBMITTED",
         productionRejectionReason: null,
+        email: null,
         phoneNumber: payload.phoneNumber ?? null,
         businessLocation: null,
         taxClearanceReference: null,

@@ -306,6 +306,7 @@ export function generateIntegrators(count = 4): Integrator[] {
         : null,
       productionStatus,
       productionRejectionReason: productionStatus === "REJECTED" ? "RDB certificate expired" : null,
+      email: null,
       phoneNumber: randomMsisdn(pick(["8", "9"])),
       businessLocation: productionStatus === "NOT_SUBMITTED" ? null : "Kigali, Nyarugenge",
       taxClearanceReference: productionStatus === "NOT_SUBMITTED" ? null : `TAX-${randomInt(100000, 999999)}`,
