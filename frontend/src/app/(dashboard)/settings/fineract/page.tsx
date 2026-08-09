@@ -28,7 +28,7 @@ export default function FineractFloatPage() {
       const result = await fineractAdminService.getBalance(id.trim());
       setBalance(result.balance_rwf);
     } catch {
-      toast({ title: "Failed to fetch balance", variant: "destructive" });
+      toast({ title: "Failed to fetch balance", variant: "error" });
     } finally {
       setBalanceLoading(false);
     }
@@ -42,7 +42,7 @@ export default function FineractFloatPage() {
     e.preventDefault();
     const parsed = parseFloat(amount);
     if (!parsed || parsed <= 0) {
-      toast({ title: "Enter a valid amount", variant: "destructive" });
+      toast({ title: "Enter a valid amount", variant: "error" });
       return;
     }
     setDepositing(true);
@@ -54,7 +54,7 @@ export default function FineractFloatPage() {
       await fetchBalance(accountId);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Deposit failed";
-      toast({ title: msg, variant: "destructive" });
+      toast({ title: msg, variant: "error" });
     } finally {
       setDepositing(false);
     }
