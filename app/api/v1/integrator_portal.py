@@ -1,10 +1,11 @@
 import logging
 
 import pymysql
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 
 from app.config import settings
+from app.schemas.dashboard import CollectionTransactionOut, PaginatedTransactions
 from app.schemas.integrator import (
     DocumentType,
     IntegratorDocumentOut,
@@ -170,4 +171,40 @@ async def submit_production_kyc(
         tax_clearance_file_name=tax_doc["file_name"],
         rdb_certificate_file_name=rdb_doc["file_name"],
         ip_whitelist=body.ip_whitelist,
+    )
+
+
+def _transaction_out(row: dict) -> CollectionTransactionOut:
+    return CollectionTransactionOut(
+        id=str(row["id"]),
+        idempotency_key=row["idempotency_key"],
+        fineract_savings_account_id=row["fineract_savings_account_id"],
+        provider=row["provider"],
+        customer_account_number=row["customer_account_number"],
+        customer_name=row["customer_name"],
+        amount_rwf=row["amount_rwf"],
+        status=row["status"],
+        debit_transaction_id=row["fineract_debit_txn_id"],
+        refund_transaction_id=row["fineract_refund_txn_id"],
+        provider_transaction_reference=row["provider_transaction_reference"],
+        created_at=row["created_at"].isoformat(),
+    )
+
+
+@router.get("/transactions", response_model=PaginatedTransactions)
+async def list_transactions(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    integrator: dict = Depends(_current_integrator),
+) -> PaginatedTransactions:
+    """Transaction history scoped to the calling integrator's own collections,
+    newest first. Intended for the self-service portal's history tab."""
+    repo = request.app.state.transaction_log_repo
+    rows, total = await repo.list_by_integrator(integrator["id"], page, page_size)
+    return PaginatedTransactions(
+        items=[_transaction_out(row) for row in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
     )

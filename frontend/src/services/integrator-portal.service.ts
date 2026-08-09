@@ -2,6 +2,7 @@ import { apiClient } from "@/lib/axios";
 import { MOCK_MODE, simulateLatency } from "@/lib/mock";
 import { mockDocumentStore } from "@/data/mock/mock-document-store";
 import type {
+  CollectionTransaction,
   DocumentType,
   Integrator,
   IntegratorDocument,
@@ -10,6 +11,13 @@ import type {
   IntegratorSignupPayload,
   ProductionKycPayload,
 } from "@/types/api";
+
+interface PaginatedTransactions {
+  items: CollectionTransaction[];
+  total: number;
+  page: number;
+  page_size: number;
+}
 
 // snake_case <-> camelCase at the edge, matching app/schemas/integrator.py.
 function integratorFromApi(row: {
@@ -203,6 +211,56 @@ export const integratorPortalService = {
       headers: { Authorization: `Bearer ${token}` },
     });
     return (data as Parameters<typeof documentFromApi>[0][]).map(documentFromApi);
+  },
+
+  /** GET /api/v1/integrator-portal/transactions - paginated history for the
+   * calling integrator, newest first. */
+  async listTransactions(
+    token: string,
+    page = 1,
+    pageSize = 20
+  ): Promise<PaginatedTransactions> {
+    if (MOCK_MODE) {
+      await simulateLatency(150, 300);
+      return { items: [], total: 0, page, page_size: pageSize };
+    }
+    const { data } = await apiClient.get("/api/v1/integrator-portal/transactions", {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { page, pageSize },
+    });
+    return {
+      items: (data.items as Array<{
+        id: string;
+        idempotency_key: string;
+        fineract_savings_account_id: string;
+        provider: string;
+        customer_account_number: string;
+        customer_name: string;
+        amount_rwf: number;
+        status: CollectionTransaction["status"];
+        debit_transaction_id: string | null;
+        refund_transaction_id: string | null;
+        provider_transaction_reference: string | null;
+        created_at: string;
+      }>).map((row) => ({
+        id: row.id,
+        idempotencyKey: row.idempotency_key,
+        fineractSavingsAccountId: row.fineract_savings_account_id,
+        provider: row.provider,
+        customerAccountNumber: row.customer_account_number,
+        customerName: row.customer_name,
+        amountRwf: row.amount_rwf,
+        status: row.status,
+        debitTransactionId: row.debit_transaction_id,
+        refundTransactionId: row.refund_transaction_id,
+        providerTransactionReference: row.provider_transaction_reference,
+        channel: row.provider as CollectionTransaction["channel"],
+        createdAt: row.created_at,
+      })),
+      total: data.total,
+      page: data.page,
+      page_size: data.page_size,
+    };
   },
 
   /** POST /api/v1/integrator-portal/production/submit - Bearer <session token>.

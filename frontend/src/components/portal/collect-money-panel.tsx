@@ -558,19 +558,10 @@ export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultF
           )}
         </div>
         <CardDescription>
-          {isSandbox ? (
-            <>
-              Runs the real debit → collect → refund flow safely against a simulated provider -
-              nothing real is charged. Use account number{" "}
-              <code className="rounded bg-secondary px-1 py-0.5 font-mono text-xs">00000000000</code>{" "}
-              to see the rollback path.
-            </>
-          ) : (
-            <span className="font-medium text-warning">
-              Production mode - this calls DDIN&apos;s real collection API and debits a real
-              Fineract account. Nothing here is simulated.
-            </span>
-          )}
+          <span className="font-medium text-warning">
+            Live mode — this calls DDIN&apos;s real sandbox API and debits the Fineract float
+            account. An STK push will be sent to the customer&apos;s phone.
+          </span>
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -598,7 +589,21 @@ export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultF
             required
           />
           <Input label="Customer name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="KALISA John" required />
-          <Input label="Customer account number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} placeholder="0788123456" required />
+          <Input
+            label="Customer phone number"
+            value={accountNumber}
+            onChange={(e) => {
+              const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+              setAccountNumber(val);
+            }}
+            placeholder="0788123456"
+            inputMode="numeric"
+            pattern="\d{10}"
+            minLength={10}
+            maxLength={10}
+            hint={accountNumber.length > 0 && accountNumber.length < 10 ? `${10 - accountNumber.length} more digit${10 - accountNumber.length === 1 ? "" : "s"} needed` : undefined}
+            required
+          />
           <Input label="Amount (RWF)" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
 
           <div>

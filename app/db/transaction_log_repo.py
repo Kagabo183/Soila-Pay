@@ -209,6 +209,32 @@ class TransactionLogRepo:
                 rows = await cur.fetchall()
         return rows, total
 
+    async def list_by_integrator(
+        self,
+        integrator_id: int,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict], int]:
+        """Newest first, scoped to one integrator. Powers the portal's
+        transaction history view."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT COUNT(*) AS total FROM transaction_logs WHERE integrator_id = %s",
+                    (integrator_id,),
+                )
+                total = (await cur.fetchone())["total"]
+                await cur.execute(
+                    """
+                    SELECT * FROM transaction_logs WHERE integrator_id = %s
+                    ORDER BY id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (integrator_id, page_size, (page - 1) * page_size),
+                )
+                rows = await cur.fetchall()
+        return rows, total
+
     async def provider_stats(self) -> list[dict]:
         """One row per distinct provider ever seen, with today's collection
         count and a success rate. Powers GET /api/v1/providers - there's no
