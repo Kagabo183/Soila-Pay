@@ -52,6 +52,27 @@ function formatRwf(value: number): string {
   return new Intl.NumberFormat("en-RW", { maximumFractionDigits: 0 }).format(value) + " RWF";
 }
 
+/** DDIN requires the phone number's prefix to match the mobile money network,
+ * but only enforces it at collection/initiate - i.e. after the Fineract wallet
+ * has already been debited, forcing a debit-then-refund round trip for a plain
+ * typo. Catching it on the form keeps the wallet untouched. Prefixes are
+ * DDIN's own, quoted from its validation errors (confirmed live 2026-08-09);
+ * the same rule is enforced server-side in app/schemas/collection.py. */
+const PROVIDER_PREFIXES: Record<"MTN" | "AIRTEL", string[]> = {
+  MTN: ["078", "079", "25078", "25079"],
+  AIRTEL: ["072", "073", "25072", "25073"],
+};
+
+function providerPrefixError(provider: "MTN" | "AIRTEL", accountNumber: string): string | null {
+  const number = accountNumber.trim();
+  if (!number) return null;
+  const prefixes = PROVIDER_PREFIXES[provider];
+  if (prefixes.some((prefix) => number.startsWith(prefix))) return null;
+  return `${provider} numbers must start with ${prefixes.slice(0, -1).join(", ")}, or ${
+    prefixes[prefixes.length - 1]
+  }`;
+}
+
 function nowTime(): string {
   return formatTime(new Date());
 }
@@ -322,8 +343,14 @@ export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultF
     };
   }, [result, isSandbox, integratorApiKey]);
 
+  const prefixError = providerPrefixError(provider, accountNumber);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (prefixError) {
+      toast({ title: "Check the phone number", description: prefixError, variant: "error" });
+      return;
+    }
     revealTimers.current.forEach(clearTimeout);
     revealTimers.current = [];
     setRunning(true);
@@ -370,7 +397,14 @@ export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultF
       if (axios.isAxiosError(error)) {
         const detail = error.response?.data?.detail ?? error.response?.data?.message;
         if (typeof detail === "string") description = detail;
-        else if (error.response) description = `HTTP ${error.response.status}`;
+        // FastAPI request-validation errors (422) return detail as a list of
+        // {loc, msg, ...} - surface the actual messages instead of "HTTP 422".
+        else if (Array.isArray(detail)) {
+          const messages = detail
+            .map((item) => (typeof item?.msg === "string" ? item.msg.replace(/^Value error, /, "") : null))
+            .filter(Boolean);
+          description = messages.length > 0 ? messages.join(" ") : `HTTP ${error.response?.status}`;
+        } else if (error.response) description = `HTTP ${error.response.status}`;
       } else if (error instanceof Error) {
         description = error.message;
       }
@@ -596,12 +630,17 @@ export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultF
               const val = e.target.value.replace(/\D/g, "").slice(0, 10);
               setAccountNumber(val);
             }}
-            placeholder="0788123456"
+            placeholder={provider === "MTN" ? "0788123456" : "0721234567"}
             inputMode="numeric"
             pattern="\d{10}"
             minLength={10}
             maxLength={10}
-            hint={accountNumber.length > 0 && accountNumber.length < 10 ? `${10 - accountNumber.length} more digit${10 - accountNumber.length === 1 ? "" : "s"} needed` : undefined}
+            error={prefixError ?? undefined}
+            hint={
+              accountNumber.length > 0 && accountNumber.length < 10
+                ? `${10 - accountNumber.length} more digit${10 - accountNumber.length === 1 ? "" : "s"} needed`
+                : `${provider} numbers start with ${PROVIDER_PREFIXES[provider].slice(0, 2).join(" or ")}`
+            }
             required
           />
           <Input label="Amount (RWF)" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
@@ -633,7 +672,7 @@ export function CollectMoneyPanel({ integratorApiKey, isSandbox = true, defaultF
             </p>
           </div>
 
-          <Button type="submit" loading={running} className="w-fit">
+          <Button type="submit" loading={running} disabled={prefixError !== null} className="w-fit">
             Collect Money
           </Button>
         </form>
