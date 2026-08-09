@@ -9,6 +9,8 @@ import type {
   IntegratorLoginPayload,
   IntegratorSession,
   IntegratorSignupPayload,
+  IntegratorWebhook,
+  IntegratorWebhookCreated,
   ProductionKycPayload,
 } from "@/types/api";
 
@@ -261,6 +263,57 @@ export const integratorPortalService = {
       page: data.page,
       page_size: data.page_size,
     };
+  },
+
+  /** POST /api/v1/integrator-portal/webhooks - register a callback URL. */
+  async createWebhook(
+    token: string,
+    callbackUrl: string,
+    events: string[]
+  ): Promise<IntegratorWebhookCreated> {
+    const { data } = await apiClient.post(
+      "/api/v1/integrator-portal/webhooks",
+      { callback_url: callbackUrl, events },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return {
+      id: data.id,
+      callbackUrl: data.callback_url,
+      events: data.events,
+      secretHint: data.secret_hint,
+      secret: data.secret,
+      isActive: data.is_active,
+      createdAt: data.created_at,
+    };
+  },
+
+  /** GET /api/v1/integrator-portal/webhooks */
+  async listWebhooks(token: string): Promise<IntegratorWebhook[]> {
+    const { data } = await apiClient.get("/api/v1/integrator-portal/webhooks", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return (data as Array<{
+      id: number;
+      callback_url: string;
+      events: string[];
+      secret_hint: string;
+      is_active: boolean;
+      created_at: string;
+    }>).map((row) => ({
+      id: row.id,
+      callbackUrl: row.callback_url,
+      events: row.events,
+      secretHint: row.secret_hint,
+      isActive: row.is_active,
+      createdAt: row.created_at,
+    }));
+  },
+
+  /** DELETE /api/v1/integrator-portal/webhooks/:id */
+  async deleteWebhook(token: string, id: number): Promise<void> {
+    await apiClient.delete(`/api/v1/integrator-portal/webhooks/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
   },
 
   /** POST /api/v1/integrator-portal/production/submit - Bearer <session token>.

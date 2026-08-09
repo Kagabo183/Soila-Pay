@@ -19,6 +19,7 @@ from app.db.database import close_pool, create_pool
 from app.db.ddin_diagnostics_repo import DdinDiagnosticsRepo
 from app.db.integrator_document_repo import IntegratorDocumentRepo
 from app.db.integrator_repo import IntegratorRepo
+from app.db.integrator_webhook_repo import IntegratorWebhookRepo
 from app.db.transaction_log_repo import TransactionLogRepo
 from app.logging_conf import configure_logging
 from app.services.collection_orchestrator import CollectionOrchestrator
@@ -68,11 +69,14 @@ async def lifespan(app: FastAPI):
     integrator_document_repo = IntegratorDocumentRepo(pool)
     collection_provider = get_collection_provider(settings)
 
+    integrator_webhook_repo = IntegratorWebhookRepo(pool)
+
     app.state.db_pool = pool
     app.state.fineract_client = fineract_client
     app.state.transaction_log_repo = repo
     app.state.integrator_repo = integrator_repo
     app.state.integrator_document_repo = integrator_document_repo
+    app.state.integrator_webhook_repo = integrator_webhook_repo
     app.state.ddin_diagnostics_repo = DdinDiagnosticsRepo(pool)
     app.state.orchestrator = CollectionOrchestrator(
         settings=settings,
@@ -80,6 +84,7 @@ async def lifespan(app: FastAPI):
         fineract=fineract_client,
         collection_provider=collection_provider,
         integrator_repo=integrator_repo,
+        webhook_repo=integrator_webhook_repo,
     )
 
     if settings.app_env == "prod" and not settings.fineract_ssl_verify:

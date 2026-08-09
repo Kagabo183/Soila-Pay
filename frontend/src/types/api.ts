@@ -364,3 +364,16 @@ export interface IntegratorDocument {
   fileSizeBytes: number;
   uploadedAt: string;
 }
+
+export interface IntegratorWebhook {
+  id: number;
+  callbackUrl: string;
+  events: string[];
+  secretHint: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface IntegratorWebhookCreated extends IntegratorWebhook {
+  secret: string;
+}

@@ -1,8 +1,11 @@
 import logging
+import secrets
+from typing import Literal
 
 import pymysql
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel, HttpUrl
 
 from app.config import settings
 from app.schemas.dashboard import CollectionTransactionOut, PaginatedTransactions
@@ -208,3 +211,86 @@ async def list_transactions(
         page=page,
         page_size=page_size,
     )
+
+
+# ---------------------------------------------------------------------------
+# Webhook subscriptions
+# ---------------------------------------------------------------------------
+
+VALID_EVENTS = {"collection.success", "collection.failed"}
+
+
+class WebhookCreate(BaseModel):
+    callback_url: HttpUrl
+    events: list[Literal["collection.success", "collection.failed"]]
+
+
+class WebhookOut(BaseModel):
+    id: int
+    callback_url: str
+    events: list[str]
+    secret_hint: str
+    is_active: bool
+    created_at: str
+
+
+class WebhookCreatedOut(WebhookOut):
+    secret: str
+
+
+def _webhook_out(row: dict, full_secret: str | None = None) -> dict:
+    secret = row["secret"]
+    hint = secret[:8] + "..." if len(secret) > 8 else secret
+    base = {
+        "id": row["id"],
+        "callback_url": row["callback_url"],
+        "events": row["events"],
+        "secret_hint": hint,
+        "is_active": bool(row["is_active"]),
+        "created_at": row["created_at"].isoformat(),
+    }
+    if full_secret is not None:
+        base["secret"] = full_secret
+    return base
+
+
+@router.post("/webhooks", response_model=WebhookCreatedOut, status_code=201)
+async def create_webhook(
+    body: WebhookCreate,
+    request: Request,
+    integrator: dict = Depends(_current_integrator),
+) -> WebhookCreatedOut:
+    if not body.events:
+        raise HTTPException(status_code=400, detail="Select at least one event to subscribe to.")
+    secret = secrets.token_hex(32)
+    repo = request.app.state.integrator_webhook_repo
+    row = await repo.create(
+        integrator_id=integrator["id"],
+        callback_url=str(body.callback_url),
+        events=list(body.events),
+        secret=secret,
+    )
+    return WebhookCreatedOut(**_webhook_out(row, full_secret=secret))
+
+
+@router.get("/webhooks", response_model=list[WebhookOut])
+async def list_webhooks(
+    request: Request,
+    integrator: dict = Depends(_current_integrator),
+) -> list[WebhookOut]:
+    repo = request.app.state.integrator_webhook_repo
+    rows = await repo.list_by_integrator(integrator["id"])
+    return [WebhookOut(**_webhook_out(row)) for row in rows]
+
+
+@router.delete("/webhooks/{webhook_id}", status_code=204)
+async def delete_webhook(
+    webhook_id: int,
+    request: Request,
+    integrator: dict = Depends(_current_integrator),
+) -> Response:
+    repo = request.app.state.integrator_webhook_repo
+    deleted = await repo.delete(webhook_id, integrator["id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Webhook not found.")
+    return Response(status_code=204)

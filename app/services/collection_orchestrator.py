@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from decimal import Decimal
 from typing import Optional
@@ -11,6 +12,7 @@ from tenacity import (
 
 from app.config import Settings
 from app.db.integrator_repo import IntegratorRepo
+from app.db.integrator_webhook_repo import IntegratorWebhookRepo
 from app.db.transaction_log_repo import (
     STATUS_DEBIT_FAILED,
     STATUS_DEBITED,
@@ -30,6 +32,7 @@ from app.logging_conf import structured
 from app.schemas.collection import CollectionRequest, CollectionResponse
 from app.services.collection_provider import CollectionProvider
 from app.services.fineract_client import FineractClient
+from app.services import webhook_dispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,7 @@ class CollectionOrchestrator:
         fineract: FineractClient,
         collection_provider: CollectionProvider,
         integrator_repo: Optional[IntegratorRepo] = None,
+        webhook_repo: Optional[IntegratorWebhookRepo] = None,
     ):
         self._settings = settings
         self._repo = repo
@@ -53,6 +57,7 @@ class CollectionOrchestrator:
         # calculation. When present, drives the per-transaction fee/cost/margin
         # snapshot recorded on success - see _compute_fee_snapshot below.
         self._integrator_repo = integrator_repo
+        self._webhook_repo = webhook_repo
 
     async def execute_collection(
         self,
@@ -212,6 +217,7 @@ class CollectionOrchestrator:
                 idempotency_key=idempotency_key,
                 debit_txn_id=debit_txn_id,
                 error_detail=str(exc),
+                integrator_id=integrator["id"] if integrator else None,
             )
 
         response = CollectionResponse(
@@ -239,6 +245,9 @@ class CollectionOrchestrator:
                 debit_transaction_id=debit_txn_id,
             ),
         )
+        updated_row = await self._repo.get_by_idempotency_key(idempotency_key)
+        integrator_id = integrator["id"] if integrator else None
+        self._fire_webhooks(integrator_id, webhook_dispatcher.EVENT_COLLECTION_SUCCESS, updated_row or {})
         return response
 
     async def _compute_fee_snapshot(
@@ -354,6 +363,8 @@ class CollectionOrchestrator:
             "collection_succeeded_via_webhook",
             extra=structured("collection_succeeded_via_webhook", idempotency_key=idempotency_key),
         )
+        updated_row = await self._repo.get_by_idempotency_key(idempotency_key)
+        self._fire_webhooks(row.get("integrator_id"), webhook_dispatcher.EVENT_COLLECTION_SUCCESS, updated_row or row)
 
     async def resolve_provider_failure(self, idempotency_key: str, error_detail: str) -> None:
         """Called from the DDIN webhook handler on a collection.failed event -
@@ -378,6 +389,7 @@ class CollectionOrchestrator:
             idempotency_key=idempotency_key,
             debit_txn_id=row["fineract_debit_txn_id"],
             error_detail=error_detail,
+            integrator_id=row.get("integrator_id"),
         )
 
     async def sync_with_provider(self, idempotency_key: str) -> Optional[CollectionResponse]:
@@ -420,6 +432,20 @@ class CollectionOrchestrator:
             return None
         return await self._integrator_repo.get_by_id(integrator_id)
 
+    def _fire_webhooks(self, integrator_id, event: str, row: dict) -> None:
+        if self._webhook_repo is None or integrator_id is None:
+            return
+
+        async def _task() -> None:
+            try:
+                hooks = await self._webhook_repo.list_active_for_event(integrator_id, event)
+                if hooks:
+                    await webhook_dispatcher.dispatch(hooks, event, row)
+            except Exception:
+                logger.exception("webhook_fire_error", extra={"integrator_id": integrator_id})
+
+        asyncio.create_task(_task())
+
     async def _rollback(
         self,
         *,
@@ -428,6 +454,7 @@ class CollectionOrchestrator:
         idempotency_key: str,
         debit_txn_id: str,
         error_detail: str,
+        integrator_id: Optional[int] = None,
     ) -> CollectionResponse:
         note = f"Rollback refund for failed collection (debit txn {debit_txn_id})"
         attempts = 0
@@ -487,6 +514,8 @@ class CollectionOrchestrator:
                 f"{error_detail} | refund error: {exc}",
                 response.model_dump(mode="json"),
             )
+            failed_row = await self._repo.get_by_idempotency_key(idempotency_key)
+            self._fire_webhooks(integrator_id, webhook_dispatcher.EVENT_COLLECTION_FAILED, failed_row or {})
             return response
 
         response = CollectionResponse(
@@ -513,4 +542,6 @@ class CollectionOrchestrator:
                 refund_transaction_id=refund_txn_id,
             ),
         )
+        failed_row = await self._repo.get_by_idempotency_key(idempotency_key)
+        self._fire_webhooks(integrator_id, webhook_dispatcher.EVENT_COLLECTION_FAILED, failed_row or {})
         return response
