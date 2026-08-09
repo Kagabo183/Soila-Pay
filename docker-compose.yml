@@ -5,7 +5,7 @@ services:
   # specified. See fineract-db below for why Fineract itself does NOT share
   # this database.
   soila-pay-db:
-    image: mysql:8.0
+    image: mysql:8.0.27
     container_name: soila-pay-db
     restart: unless-stopped
     environment:
@@ -112,8 +112,6 @@ services:
     env_file: .env
     environment:
       MYSQL_HOST: soila-pay-db
-    ports:
-      - "8000:8000"
     depends_on:
       soila-pay-db:
         condition: service_healthy
@@ -126,6 +124,30 @@ services:
         condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  soila-pay-frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: https://pay.soila.rw
+        NEXT_PUBLIC_USE_MOCKS: "false"
+    image: soila-pay-frontend:latest
+    container_name: soila-pay-frontend
+    restart: unless-stopped
+    depends_on:
+      - soila-pay-middleware
+
+  soila-pay-nginx:
+    image: nginx:alpine
+    container_name: soila-pay-nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/soila-pay.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - soila-pay-frontend
+      - soila-pay-middleware
 
 volumes:
   mysql_data:
