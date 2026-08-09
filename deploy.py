@@ -24,7 +24,7 @@ def run(cmd, timeout=120, label=None):
 
 run('cd /var/www/soila-pay && git stash && git pull origin main 2>&1', label='git pull')
 run('cd /var/www/soila-pay && docker compose build 2>&1', timeout=600, label='docker build')
-run('cd /var/www/soila-pay && docker compose up -d 2>&1', timeout=60, label='docker compose up')
+run('cd /var/www/soila-pay && docker compose up -d --force-recreate 2>&1', timeout=60, label='docker compose up')
 run('cd /var/www/soila-pay && docker compose ps 2>&1', timeout=15, label='status')
 
 print("\n=== DONE ===")
