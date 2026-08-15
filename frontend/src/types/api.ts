@@ -135,6 +135,34 @@ export interface CollectionTransaction {
   providerTransactionReference: string | null;
   channel: "MTN" | "AIRTEL" | "BANK";
   createdAt: string;
+  // Admin-only money breakdown (app/schemas/dashboard.py's
+  // AdminTransactionOut). Present only on the admin-gated
+  // GET /api/v1/collection/transactions -- the integrator portal's own
+  // history endpoint deliberately does NOT return ddinCost/margin, since
+  // those are Soila Pay's provider cost and per-transaction margin.
+  //
+  // Nullable throughout: the fee columns were added after transaction_logs
+  // already had rows, so older transactions genuinely have no breakdown and
+  // the table renders "-" rather than a misleading 0.
+  integratorId?: number | null;
+  integratorName?: string | null;
+  integratorFeePercentage?: number | null;
+  feeAmountRwf?: number | null;
+  ddinCostPercentage?: number | null;
+  ddinCostAmountRwf?: number | null;
+  marginAmountRwf?: number | null;
+}
+
+/** Filter-wide money totals returned alongside the admin transactions page.
+ *  Sums cover EVERY row matching the current filter, not just the visible
+ *  page, and count SUCCESS rows only (a refunded collection earned nothing). */
+export interface AdminTransactionTotals {
+  collectedRwf: number;
+  feesRwf: number;
+  ddinCostRwf: number;
+  marginRwf: number;
+  successCount: number;
+  countedRows: number;
 }
 
 export interface CollectionRequest {

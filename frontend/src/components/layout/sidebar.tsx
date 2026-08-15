@@ -12,6 +12,7 @@ import {
   Send,
   Zap,
   Wallet,
+  Receipt,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -21,7 +22,10 @@ import { cn } from "@/lib/utils";
 const NAV_SECTIONS = [
   {
     label: "Overview",
-    items: [{ href: "/dashboard", label: "Provider Dashboard", icon: LayoutDashboard }],
+    items: [
+      { href: "/dashboard", label: "Provider Dashboard", icon: LayoutDashboard },
+      { href: "/transactions", label: "Transactions", icon: Receipt },
+    ],
   },
   {
     label: "Developer Tools",
