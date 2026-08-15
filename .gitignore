@@ -8,8 +8,6 @@ venv/
 
 # Env files - real secrets live only in .env, never commit it. .env.example
 # stays tracked as the template.
-.env
-.env.local
 .env.*.local
 
 # OS
@@ -17,10 +15,14 @@ venv/
 Thumbs.db
 
 # IDE
-.vscode/
 .idea/
 
 # Docker
 *.log
 
 # Frontend has its own .gitignore (node_modules, .next, tsbuildinfo, etc.)
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+config.bat
+node_modules
