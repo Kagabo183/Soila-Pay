@@ -24,3 +24,6 @@ Thumbs.db
 *.log
 
 # Frontend has its own .gitignore (node_modules, .next, tsbuildinfo, etc.)
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat

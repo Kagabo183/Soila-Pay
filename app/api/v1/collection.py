@@ -12,7 +12,13 @@ from app.exceptions import (
     ManualReconciliationRequiredError,
 )
 from app.schemas.collection import CollectionRequest, CollectionResponse
-from app.schemas.dashboard import CollectionTransactionOut, PaginatedTransactions
+from app.schemas.dashboard import (
+    AdminTransactionOut,
+    AdminTransactionTotals,
+    CollectionTransactionOut,
+    PaginatedAdminTransactions,
+    PaginatedTransactions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,23 +81,68 @@ def _transaction_out(row: dict) -> CollectionTransactionOut:
     )
 
 
-@router.get("/transactions", response_model=PaginatedTransactions, dependencies=[Depends(require_admin)])
+def _admin_transaction_out(row: dict) -> AdminTransactionOut:
+    """Admin rows carry the money breakdown the integrator-facing schema
+    deliberately omits - see AdminTransactionOut's docstring. Decimal -> float
+    via _num() because aiomysql returns DECIMAL columns as Decimal, which
+    Pydantic v2 would serialize as a JSON string and break the frontend's
+    arithmetic."""
+    def _num(value):
+        return None if value is None else float(value)
+
+    return AdminTransactionOut(
+        **_transaction_out(row).model_dump(),
+        integrator_id=row.get("integrator_id"),
+        integrator_name=row.get("integrator_name"),
+        integrator_fee_percentage=_num(row.get("integrator_fee_percentage")),
+        fee_amount_rwf=_num(row.get("fee_amount_rwf")),
+        ddin_cost_percentage=_num(row.get("ddin_cost_percentage")),
+        ddin_cost_amount_rwf=_num(row.get("ddin_cost_amount_rwf")),
+        margin_amount_rwf=_num(row.get("margin_amount_rwf")),
+    )
+
+
+@router.get(
+    "/transactions",
+    response_model=PaginatedAdminTransactions,
+    dependencies=[Depends(require_admin)],
+)
 async def list_transactions(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=200, alias="pageSize"),
     status: Optional[list[str]] = Query(default=None),
     channel: Optional[list[str]] = Query(default=None),
-) -> PaginatedTransactions:
+) -> PaginatedAdminTransactions:
     """Admin-only view across every integrator's transactions - powers the
-    Provider Dashboard's Recent Collections table. `channel` is accepted as an
-    alias for provider filtering (MTN/AIRTEL) - the frontend's Provider type
-    predates this real backend and calls it "channel"; there's no separate
-    channel concept here, a collection's provider IS its channel."""
+    Provider Dashboard's Recent Collections table and the Transactions page.
+    `channel` is accepted as an alias for provider filtering (MTN/AIRTEL) - the
+    frontend's Provider type predates this real backend and calls it "channel";
+    there's no separate channel concept here, a collection's provider IS its
+    channel.
+
+    Returns the full money breakdown per row (fee charged, DDIN cost, margin
+    kept) plus filter-wide totals. This endpoint is admin-gated by
+    require_admin; the integrator-facing equivalents in integrator_portal.py
+    still return the narrower CollectionTransactionOut and are unchanged."""
     repo = request.app.state.transaction_log_repo
     rows, total = await repo.list_paginated(page, page_size, status=status, provider=channel)
-    items = [_transaction_out(row) for row in rows]
-    return PaginatedTransactions(items=items, total=total, page=page, page_size=page_size)
+    totals_row = await repo.totals_for_filter(status=status, provider=channel)
+    items = [_admin_transaction_out(row) for row in rows]
+    return PaginatedAdminTransactions(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        totals=AdminTransactionTotals(
+            collected_rwf=float(totals_row["collected_rwf"]),
+            fees_rwf=float(totals_row["fees_rwf"]),
+            ddin_cost_rwf=float(totals_row["ddin_cost_rwf"]),
+            margin_rwf=float(totals_row["margin_rwf"]),
+            success_count=int(totals_row["success_count"]),
+            counted_rows=int(totals_row["counted_rows"]),
+        ),
+    )
 
 
 @router.get("/transactions/{idempotency_key}", response_model=CollectionTransactionOut)

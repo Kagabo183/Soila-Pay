@@ -198,16 +198,72 @@ class TransactionLogRepo:
                 )
                 total = (await cur.fetchone())["total"]
 
+                # t.* keeps every existing column (including the fee/cost/
+                # margin ones the admin view needs) while the LEFT JOIN adds
+                # the integrator's display name. LEFT, not INNER: integrator_id
+                # is nullable, and an INNER join would silently drop those rows
+                # from the admin table entirely.
+                #
+                # Aliased explicitly rather than `SELECT *` across both tables,
+                # which would collide on id/name/created_at and let the joined
+                # integrator's values overwrite the transaction's own.
+                #
+                # where_sql's columns (status/provider) need no `t.` prefix:
+                # neither exists on `integrators`, so they're unambiguous here
+                # and the exact same clause still works for the COUNT above.
                 await cur.execute(
                     f"""
-                    SELECT * FROM transaction_logs {where_sql}
-                    ORDER BY id DESC
+                    SELECT t.*, i.name AS integrator_name
+                    FROM transaction_logs t
+                    LEFT JOIN integrators i ON i.id = t.integrator_id
+                    {where_sql}
+                    ORDER BY t.id DESC
                     LIMIT %s OFFSET %s
                     """,
                     [*params, page_size, (page - 1) * page_size],
                 )
                 rows = await cur.fetchall()
         return rows, total
+
+    async def totals_for_filter(
+        self,
+        status: Optional[list[str]] = None,
+        provider: Optional[list[str]] = None,
+    ) -> dict:
+        """Money totals across EVERY row matching the filter, not just the
+        current page -- the admin transactions table shows these as the
+        reconciliation figures, and a per-page sum would understate them.
+
+        Only SUCCESS rows are summed: a FAILED_REFUNDED collection is money
+        that went back to the customer, so counting its fee/margin would
+        overstate revenue. success_count vs counted_rows makes that split
+        visible instead of silently dropping rows."""
+        where_clauses = []
+        params: list[Any] = []
+        if status:
+            where_clauses.append(f"status IN ({','.join(['%s'] * len(status))})")
+            params.extend(status)
+        if provider:
+            where_clauses.append(f"provider IN ({','.join(['%s'] * len(provider))})")
+            params.extend(provider)
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT
+                        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount_rwf END), 0)           AS collected_rwf,
+                        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN fee_amount_rwf END), 0)       AS fees_rwf,
+                        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN ddin_cost_amount_rwf END), 0) AS ddin_cost_rwf,
+                        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN margin_amount_rwf END), 0)    AS margin_rwf,
+                        COALESCE(SUM(status = 'SUCCESS'), 0)                                         AS success_count,
+                        COUNT(*)                                                                     AS counted_rows
+                    FROM transaction_logs {where_sql}
+                    """,
+                    params,
+                )
+                return await cur.fetchone()
 
     async def list_by_integrator(
         self,

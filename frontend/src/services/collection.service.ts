@@ -2,6 +2,7 @@ import { apiClient } from "@/lib/axios";
 import { MOCK_MODE, paginate, simulateLatency } from "@/lib/mock";
 import { generateCollections } from "@/data/mock/generators";
 import type {
+  AdminTransactionTotals,
   CollectionRequest,
   CollectionResponse,
   CollectionTransaction,
@@ -38,7 +39,18 @@ function transactionFromApi(row: {
   refund_transaction_id: string | null;
   provider_transaction_reference: string | null;
   created_at: string;
+  // Admin-only extras (AdminTransactionOut). Absent on integrator-facing
+  // responses, hence all optional -- `num()` maps both undefined and null to
+  // null so the UI can show "-" instead of NaN or a misleading 0.
+  integrator_id?: number | null;
+  integrator_name?: string | null;
+  integrator_fee_percentage?: number | null;
+  fee_amount_rwf?: number | null;
+  ddin_cost_percentage?: number | null;
+  ddin_cost_amount_rwf?: number | null;
+  margin_amount_rwf?: number | null;
 }): CollectionTransaction {
+  const num = (v: number | null | undefined) => (v === null || v === undefined ? null : Number(v));
   return {
     id: row.id,
     idempotencyKey: row.idempotency_key,
@@ -53,6 +65,13 @@ function transactionFromApi(row: {
     providerTransactionReference: row.provider_transaction_reference,
     channel: (row.provider as CollectionTransaction["channel"]) ?? "MTN",
     createdAt: row.created_at,
+    integratorId: row.integrator_id ?? null,
+    integratorName: row.integrator_name ?? null,
+    integratorFeePercentage: num(row.integrator_fee_percentage),
+    feeAmountRwf: num(row.fee_amount_rwf),
+    ddinCostPercentage: num(row.ddin_cost_percentage),
+    ddinCostAmountRwf: num(row.ddin_cost_amount_rwf),
+    marginAmountRwf: num(row.margin_amount_rwf),
   };
 }
 
@@ -128,6 +147,54 @@ export const collectionService = {
       total: data.total,
       page: data.page,
       pageSize: data.page_size,
+    };
+  },
+
+  /**
+   * GET /api/v1/collection/transactions (admin-only), same endpoint as list()
+   * but also returning the filter-wide money totals the Transactions page
+   * shows above the table. Kept separate from list() so the existing
+   * dashboard callers keep their exact PaginatedResult shape.
+   */
+  async listWithTotals(
+    params: ListCollectionsParams = {},
+  ): Promise<PaginatedResult<CollectionTransaction> & { totals: AdminTransactionTotals }> {
+    const { page = 1, pageSize = 20, status = [], channel = [] } = params;
+    const emptyTotals: AdminTransactionTotals = {
+      collectedRwf: 0, feesRwf: 0, ddinCostRwf: 0, marginRwf: 0, successCount: 0, countedRows: 0,
+    };
+    if (MOCK_MODE) {
+      await simulateLatency();
+      let filtered = MOCK_COLLECTIONS;
+      if (status.length) filtered = filtered.filter((c) => status.includes(c.status));
+      if (channel.length) filtered = filtered.filter((c) => channel.includes(c.channel));
+      return { ...paginate(filtered, page, pageSize), totals: emptyTotals };
+    }
+    const { data } = await apiClient.get<{
+      items: Parameters<typeof transactionFromApi>[0][];
+      total: number;
+      page: number;
+      page_size: number;
+      totals?: {
+        collected_rwf: number; fees_rwf: number; ddin_cost_rwf: number;
+        margin_rwf: number; success_count: number; counted_rows: number;
+      };
+    }>("/api/v1/collection/transactions", { params: { page, pageSize, status, channel } });
+    return {
+      items: data.items.map(transactionFromApi),
+      total: data.total,
+      page: data.page,
+      pageSize: data.page_size,
+      totals: data.totals
+        ? {
+            collectedRwf: Number(data.totals.collected_rwf),
+            feesRwf: Number(data.totals.fees_rwf),
+            ddinCostRwf: Number(data.totals.ddin_cost_rwf),
+            marginRwf: Number(data.totals.margin_rwf),
+            successCount: Number(data.totals.success_count),
+            countedRows: Number(data.totals.counted_rows),
+          }
+        : emptyTotals,
     };
   },
 
