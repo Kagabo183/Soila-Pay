@@ -141,42 +141,59 @@ collect endpoint above (see `CollectionOrchestrator.resolve_provider_success` /
   verification was. Get that endpoint's docs from DDIN before this can
   receive real traffic.
 
-## Running locally with Docker Compose
+## Running locally
+
+No Docker needed. You need **Python 3.12** (pinned pydantic has no 3.14 build
+yet), **Node.js 20+** and **MySQL 8** (local install or a hosted MySQL).
 
 ```bash
-cp .env.example .env
-docker compose up --build
-```
+# 1. Backend
+py -3.12 -m venv .venv          # Linux/macOS: python3.12 -m venv .venv
+.venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env            # set MYSQL_*, ADMIN_*, secrets
+python scripts/init_db.py       # creates DB + user, applies db_init/*.sql (safe to re-run)
+uvicorn app.main:app --reload   # http://localhost:8000
 
-This is a 4-node stack:
-- `soila-pay-db` - **MySQL 8**, holding only our own `soila_pay.transaction_logs`
-  audit table. This is unrelated to Fineract's own storage - see below.
-- `fineract-db` - a dedicated **PostgreSQL 16** instance used only by
-  `fineract-core`. This is *not* a design preference: the published
-  `apache/fineract` Docker image bundles only the PostgreSQL JDBC driver - MySQL
-  and MariaDB drivers are both excluded because their licenses (GPL and LGPL
-  respectively) are incompatible with ASF binary redistribution, and Fineract's
-  own README confirms MySQL/MariaDB support is now deprecated project-wide
-  (FSIP-9: Standardize on PostgreSQL). This was verified empirically while
-  building this stack: pointing `fineract-core` at MySQL 8, then at MariaDB
-  11.4, both failed at startup with `Failed to load driver class` for the
-  respective driver - see the `fineract-db` comment in `docker-compose.yml` for
-  the full trail. If you need Fineract on real MySQL/MariaDB regardless, the
-  project's documented path is to build a custom image on top of
-  `apache/fineract` with the vendor driver jar added - not attempted here.
-- `fineract-core` - a native Apache Fineract core banking container
-  (`apache/fineract:latest`), listening on `https://localhost:8443`. **First boot
-  runs Fineract's own database migrations and can take 1-3 minutes** - watch
-  `docker compose logs -f fineract-core` and wait for it to report the server has
-  started before sending collection requests.
-- `soila-pay-middleware` - this FastAPI service, on `http://localhost:8000`.
+# 2. Frontend (second terminal)
+cd frontend
+npm install
+npm run dev                     # http://localhost:3000
+```
 
 Check health: `curl http://localhost:8000/healthz`
 
-If you'd rather run Fineract on your host machine instead of in this compose
-stack, see the alternate `FINERACT_BASE_URL` value commented in `.env.example`
-(`host.docker.internal` - "localhost" inside the middleware container refers to
-the container itself, not your host).
+The app stores its own data in MySQL only. **Apache Fineract** (core banking)
+is a separate server you run or connect to yourself - set `FINERACT_BASE_URL`
+in `.env`. Login, dashboards and admin work without it; only real collections
+(which debit/refund Fineract savings accounts) need it.
+
+## Deploying to a server
+
+Any small Linux VPS works (Ubuntu shown). One-time setup:
+
+```bash
+apt install -y python3.12-venv nodejs npm mysql-server nginx git
+git clone https://github.com/Kagabo183/Soila-Pay.git /var/www/soila-pay
+cd /var/www/soila-pay
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env            # fill in real values, APP_ENV=prod
+.venv/bin/python scripts/init_db.py
+echo "NEXT_PUBLIC_API_BASE_URL=https://your.domain" >  frontend/.env.production
+echo "NEXT_PUBLIC_USE_MOCKS=false"                  >> frontend/.env.production
+(cd frontend && npm ci && npm run build)
+cp deploy/*.service /etc/systemd/system/ && systemctl daemon-reload
+systemctl enable --now soila-pay-api soila-pay-web
+cp nginx/soila-pay.conf /etc/nginx/sites-available/soila-pay   # edit server_name
+ln -s /etc/nginx/sites-available/soila-pay /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+certbot --nginx -d your.domain  # HTTPS
+```
+
+Later updates: `python deploy.py` from your machine, with `DEPLOY_HOST` and
+`DEPLOY_KEY_FILE` (or `DEPLOY_PASSWORD`) set in your environment - it pulls,
+installs dependencies, runs migrations, rebuilds the frontend and restarts the
+services.
 
 ## Testing with Bruno
 
@@ -311,12 +328,8 @@ your actual Fineract deployment:
    deployment (no OAuth2/Keycloak layer).
 5. Business-rule rejections (e.g. insufficient balance) come back as non-2xx with
    an `errors` array, not a 200 with an embedded error flag.
-6. `fineract-core` uses the `apache/fineract:latest` image. As of writing, Docker
-   Hub does not publish a pinned semver tag like `1.9.0` for this image - only
-   `latest`, `develop`, and per-commit-hash tags - so this tracks the project's
-   mainline branch rather than a fixed release. Pin to a specific commit-hash tag
-   if you need reproducible builds, and confirm the running version's API surface
-   matches what this client expects.
+6. Confirm the Fineract version you connect to exposes the API surface this
+   client expects.
 
 ## Known gap: admin endpoints have no authentication
 
@@ -357,16 +370,6 @@ operational runbook rather than being "handled" by the code:
   Fineract account state and issue the refund manually. Route this query into
   your alerting/paging pipeline - a `FAILED_REFUND_ERROR` row is a real customer
   owed real money, not a log line to review later.
-
-## Local development (without Docker)
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env   # then edit MYSQL_HOST=localhost, MYSQL_PORT=3307 if MySQL is only reachable via the compose port mapping
-uvicorn app.main:app --reload
-```
 
 ## Tests
 
