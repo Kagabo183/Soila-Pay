@@ -1,4 +1,4 @@
-import { Sidebar } from "@/components/layout/sidebar";
+﻿import { Sidebar } from "@/components/layout/sidebar";
 import { TopNav } from "@/components/layout/top-nav";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -7,7 +7,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopNav />
-        <main className="flex-1 overflow-y-auto scrollbar-thin p-6">{children}</main>
+        <main className="min-w-0 flex-1 overflow-y-auto scrollbar-thin p-6">{children}</main>
       </div>
     </div>
   );

@@ -38,16 +38,16 @@ export function DataTable<T extends object>({
   onSortChange,
 }: DataTableProps<T>) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border scrollbar-thin">
+    <div className="overflow-x-auto rounded-md border-2 border-border bg-card shadow-md scrollbar-thin">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-border bg-secondary/50">
+          <tr className="border-b-2 border-border bg-secondary">
             {columns.map((col) => (
               <th
                 key={col.key}
                 style={{ width: col.width }}
                 className={cn(
-                  "whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+                  "whitespace-nowrap px-4 py-3 text-xs font-bold uppercase tracking-wide text-foreground",
                   col.align === "right" && "text-right",
                   col.align === "center" && "text-center"
                 )}
@@ -94,7 +94,8 @@ export function DataTable<T extends object>({
                 key={rowKey(row)}
                 onClick={() => onRowClick?.(row)}
                 className={cn(
-                  "border-b border-border last:border-0 hover:bg-secondary/40 transition-colors",
+                  // Medium: soft row rules (25% ink) so dense tables stay calm.
+                  "border-b border-border/25 last:border-0 hover:bg-[var(--bk-yellow)]/25 transition-colors",
                   onRowClick && "cursor-pointer"
                 )}
               >

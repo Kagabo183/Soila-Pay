@@ -26,7 +26,7 @@ export function TopNav() {
   }
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-5">
+    <header className="flex h-14 shrink-0 items-center justify-between border-b-2 border-border bg-card px-5">
       <div className="flex items-center gap-3">
         <StatusBadge variant={environment === "production" ? "destructive" : "info"} dot>
           {environment === "production" ? "Production" : "Sandbox"}
@@ -44,16 +44,16 @@ export function TopNav() {
       <div className="flex items-center gap-2">
         <button
           onClick={toggleTheme}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+          className="nb-press flex h-9 w-9 items-center justify-center rounded-sm border-2 border-[var(--nb-ink)] bg-card text-foreground shadow-sm"
           aria-label="Toggle theme"
         >
           {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </button>
 
-        <div className="mx-1 h-6 w-px bg-border" />
+        <div className="mx-1 h-6 w-0.5 bg-border" />
 
         <div className="flex items-center gap-2 pl-1">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-muted-foreground">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-[var(--nb-ink)] bg-[var(--bk-pink)] text-[#111111]">
             <User className="h-4 w-4" />
           </span>
           <div className="hidden leading-tight sm:block">
@@ -62,7 +62,7 @@ export function TopNav() {
           </div>
           <button
             onClick={handleLogout}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-destructive"
+            className="nb-press flex h-9 w-9 items-center justify-center rounded-sm border-2 border-[var(--nb-ink)] bg-card text-foreground shadow-sm hover:bg-[var(--bk-red)] hover:text-[#111111]"
             aria-label="Log out"
           >
             <LogOut className="h-4 w-4" />

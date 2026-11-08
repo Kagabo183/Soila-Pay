@@ -105,7 +105,7 @@ export function JsonViewer({ data, className, collapsed = false, showCopy = true
   return (
     <div
       className={cn(
-        "relative rounded-md border border-border bg-code-bg p-3 font-mono text-xs leading-relaxed text-code-foreground",
+        "relative rounded-sm border-2 border-border bg-code-bg p-3 font-mono text-xs leading-relaxed text-code-foreground",
         className
       )}
     >

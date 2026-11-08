@@ -25,7 +25,7 @@ export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: nu
 
 export function StatCardSkeleton() {
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
+    <div className="rounded-md border-2 border-border bg-card p-5 shadow-md">
       <Skeleton className="h-3 w-24" />
       <Skeleton className="mt-3 h-7 w-32" />
       <Skeleton className="mt-3 h-3 w-20" />

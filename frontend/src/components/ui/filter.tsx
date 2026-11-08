@@ -37,7 +37,7 @@ export function FilterDropdown({ label, options, selected, onChange }: FilterDro
       <button
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "flex h-9 items-center gap-2 rounded-md border border-input bg-card px-3 text-sm text-foreground hover:bg-secondary",
+          "flex h-9 items-center gap-2 rounded-sm border-2 border-input bg-card px-3 font-semibold shadow-sm text-sm text-foreground hover:bg-secondary",
           selected.length > 0 && "border-primary text-primary"
         )}
       >
@@ -50,7 +50,7 @@ export function FilterDropdown({ label, options, selected, onChange }: FilterDro
         )}
       </button>
       {open && (
-        <div className="absolute left-0 z-20 mt-1 w-48 rounded-md border border-border bg-popover p-1 shadow-lg">
+        <div className="absolute left-0 z-20 mt-1 w-48 rounded-sm border-2 border-border bg-popover p-1 shadow-md">
           {options.map((opt) => {
             const active = selected.includes(opt.value);
             return (

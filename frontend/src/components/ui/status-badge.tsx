@@ -2,16 +2,18 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+  // Flat sticker: ink outline, solid bright fill, ink text (contrast holds
+  // in both themes because the fills are light and the text is always #111).
+  "inline-flex items-center gap-1.5 rounded-sm border-[1.5px] border-[var(--nb-ink)] px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
   {
     variants: {
       variant: {
-        default: "border-border bg-secondary text-secondary-foreground",
-        success: "border-success/20 bg-success/10 text-success",
-        warning: "border-warning/20 bg-warning/10 text-warning",
-        destructive: "border-destructive/20 bg-destructive/10 text-destructive",
-        info: "border-primary/20 bg-primary/10 text-primary",
-        outline: "border-border bg-transparent text-foreground",
+        default: "bg-secondary text-secondary-foreground",
+        success: "bg-[var(--bk-green)] text-[#111111]",
+        warning: "bg-[var(--bk-yellow)] text-[#111111]",
+        destructive: "bg-[var(--bk-red)] text-[#111111]",
+        info: "bg-[var(--bk-blue)] text-[#111111]",
+        outline: "bg-transparent text-foreground",
       },
     },
     defaultVariants: { variant: "default" },
@@ -59,12 +61,7 @@ export function StatusBadge({ className, variant, dot = true, children, ...props
         <span
           className={cn(
             "h-1.5 w-1.5 rounded-full",
-            resolvedVariant === "success" && "bg-success",
-            resolvedVariant === "warning" && "bg-warning",
-            resolvedVariant === "destructive" && "bg-destructive",
-            resolvedVariant === "info" && "bg-primary",
-            (resolvedVariant === "default" || resolvedVariant === "outline") &&
-              "bg-muted-foreground"
+            resolvedVariant === "default" || resolvedVariant === "outline" ? "bg-current" : "bg-[#111111]"
           )}
         />
       )}

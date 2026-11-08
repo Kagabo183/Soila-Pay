@@ -38,7 +38,7 @@ interface ChartTooltipProps {
 function ChartTooltip({ active, payload, label }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-sm border-2 border-border bg-popover px-3 py-2 text-xs shadow-md">
       {label && <p className="mb-1 font-medium text-foreground">{label}</p>}
       {payload.map((p) => (
         <p key={p.dataKey} className="flex items-center gap-1.5 text-muted-foreground">

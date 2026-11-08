@@ -60,11 +60,11 @@ export function Drawer({
             : "-translate-x-full"
         )}
       >
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+        <div className="flex items-center justify-between border-b-2 border-border px-5 py-4">
           <h2 className="text-sm font-semibold text-foreground">{title}</h2>
           <button
             onClick={onClose}
-            className="rounded-md p-1 text-muted-foreground hover:bg-secondary"
+            className="rounded-sm border-2 border-transparent p-1 text-foreground hover:border-border hover:bg-secondary"
             aria-label="Close"
           >
             <X className="h-4 w-4" />

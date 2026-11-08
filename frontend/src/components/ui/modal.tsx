@@ -42,7 +42,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60"
         onClick={onClose}
         aria-hidden
       />
@@ -50,12 +50,12 @@ export function Modal({ open, onClose, title, description, children, footer, siz
         role="dialog"
         aria-modal="true"
         className={cn(
-          "relative z-10 w-full rounded-lg border border-border bg-card shadow-xl",
+          "relative z-10 w-full rounded-md border-2 border-border bg-card shadow-xl",
           SIZE_MAP[size]
         )}
       >
         {(title || description) && (
-          <div className="flex items-start justify-between border-b border-border px-5 py-4">
+          <div className="flex items-start justify-between border-b-2 border-border px-5 py-4">
             <div>
               {title && <h2 className="text-sm font-semibold text-foreground">{title}</h2>}
               {description && (
@@ -64,7 +64,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
             </div>
             <button
               onClick={onClose}
-              className="rounded-md p-1 text-muted-foreground hover:bg-secondary"
+              className="rounded-sm border-2 border-transparent p-1 text-foreground hover:border-border hover:bg-secondary"
               aria-label="Close"
             >
               <X className="h-4 w-4" />
@@ -73,7 +73,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
         )}
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4 scrollbar-thin">{children}</div>
         {footer && (
-          <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <div className="flex items-center justify-end gap-2 border-t-2 border-border px-5 py-3">
             {footer}
           </div>
         )}

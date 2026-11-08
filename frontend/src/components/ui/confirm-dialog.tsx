@@ -45,7 +45,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
       <Modal open={state.open} onClose={() => handle(false)} size="sm">
         <div className="flex gap-3">
           {state.destructive && (
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border-2 border-[var(--nb-ink)] bg-[var(--bk-red)] text-[#111111]">
               <AlertTriangle className="h-5 w-5" />
             </span>
           )}

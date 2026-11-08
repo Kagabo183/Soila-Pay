@@ -69,7 +69,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+          <span className="flex h-11 w-11 items-center justify-center rounded-sm border-2 border-[var(--nb-ink)] bg-[var(--bk-yellow)] text-[#111111] shadow-md">
             <Zap className="h-5 w-5" />
           </span>
           <h1 className="text-lg font-semibold text-foreground">Soila Pay</h1>

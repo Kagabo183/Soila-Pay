@@ -1,66 +1,73 @@
 @import "tailwindcss";
 
+/* Medium brutalism, platform-wide: warm paper, ink outlines, hard offset
+ * shadows (see --shadow-* in @theme below), small corners, flat colour.
+ * Text colours (success/warning/destructive) stay dark enough for AA on
+ * paper; bright *fills* live in --bk-* and always carry ink text. */
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --card: #ffffff;
-  --card-foreground: #0f172a;
-  --popover: #ffffff;
-  --popover-foreground: #0f172a;
-  --primary: #4f46e5;
+  --background: #f4f1e8;
+  --foreground: #111111;
+  --card: #fffdf6;
+  --card-foreground: #111111;
+  --popover: #fffdf6;
+  --popover-foreground: #111111;
+  --primary: #2f4bff;
   --primary-foreground: #ffffff;
-  --secondary: #f1f5f9;
-  --secondary-foreground: #0f172a;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --accent: #eef2ff;
-  --accent-foreground: #4338ca;
-  --destructive: #dc2626;
+  --secondary: #ebe6d8;
+  --secondary-foreground: #111111;
+  --muted: #ebe6d8;
+  --muted-foreground: #57544b;
+  --accent: #ffd23f;
+  --accent-foreground: #111111;
+  --destructive: #c62828;
   --destructive-foreground: #ffffff;
-  --success: #16a34a;
+  --success: #15803d;
   --success-foreground: #ffffff;
-  --warning: #d97706;
+  --warning: #a35200;
   --warning-foreground: #ffffff;
-  --border: #e2e8f0;
-  --input: #e2e8f0;
-  --ring: #4f46e5;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #0f172a;
-  --sidebar-border: #e2e8f0;
-  --code-bg: #0f172a;
-  --code-foreground: #e2e8f0;
-  --radius: 0.625rem;
+  --border: #111111;
+  --input: #111111;
+  --ring: #111111;
+  --sidebar: #fffdf6;
+  --sidebar-foreground: #111111;
+  --sidebar-border: #111111;
+  --code-bg: #111111;
+  --code-foreground: #f5f3ea;
+  --radius: 0.25rem;
+  /* Shadow ink - same as foreground, kept separate so it can be tuned. */
+  --nb-ink: #111111;
 }
 
 :root[data-theme="dark"] {
-  --background: #0b1120;
-  --foreground: #e2e8f0;
-  --card: #111827;
-  --card-foreground: #e2e8f0;
-  --popover: #111827;
-  --popover-foreground: #e2e8f0;
-  --primary: #6366f1;
-  --primary-foreground: #ffffff;
-  --secondary: #1e293b;
-  --secondary-foreground: #e2e8f0;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --accent: #1e1b4b;
-  --accent-foreground: #c7d2fe;
-  --destructive: #f87171;
-  --destructive-foreground: #1c0a0a;
-  --success: #4ade80;
-  --success-foreground: #052e12;
-  --warning: #fbbf24;
-  --warning-foreground: #451a03;
-  --border: #1f2937;
-  --input: #1f2937;
-  --ring: #6366f1;
-  --sidebar: #0f172a;
-  --sidebar-foreground: #e2e8f0;
-  --sidebar-border: #1f2937;
-  --code-bg: #030712;
-  --code-foreground: #d1d5db;
+  --background: #121212;
+  --foreground: #f2f0e8;
+  --card: #1c1c1c;
+  --card-foreground: #f2f0e8;
+  --popover: #1c1c1c;
+  --popover-foreground: #f2f0e8;
+  --primary: #7b8cff;
+  --primary-foreground: #0d0d0d;
+  --secondary: #2a2a2a;
+  --secondary-foreground: #f2f0e8;
+  --muted: #2a2a2a;
+  --muted-foreground: #b3b0a6;
+  --accent: #ffd23f;
+  --accent-foreground: #111111;
+  --destructive: #ff7b7b;
+  --destructive-foreground: #1a0606;
+  --success: #5ee08f;
+  --success-foreground: #04210f;
+  --warning: #ffc94d;
+  --warning-foreground: #2a1700;
+  --border: #e8e5dc;
+  --input: #e8e5dc;
+  --ring: #e8e5dc;
+  --sidebar: #181818;
+  --sidebar-foreground: #f2f0e8;
+  --sidebar-border: #e8e5dc;
+  --code-bg: #0a0a0a;
+  --code-foreground: #e8e5dc;
+  --nb-ink: #e8e5dc;
 }
 
 @theme inline {
@@ -98,6 +105,16 @@
   --radius-xl: calc(var(--radius) + 4px);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-brutal);
+  /* Every Tailwind shadow becomes a hard, unblurred offset shadow. */
+  --shadow-2xs: 1px 1px 0 0 var(--nb-ink);
+  --shadow-xs: 2px 2px 0 0 var(--nb-ink);
+  --shadow-sm: 2px 2px 0 0 var(--nb-ink);
+  --shadow: 3px 3px 0 0 var(--nb-ink);
+  --shadow-md: 3px 3px 0 0 var(--nb-ink);
+  --shadow-lg: 4px 4px 0 0 var(--nb-ink);
+  --shadow-xl: 5px 5px 0 0 var(--nb-ink);
+  --shadow-2xl: 6px 6px 0 0 var(--nb-ink);
 }
 
 body {
@@ -106,9 +123,207 @@ body {
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
 
+/* Bold grotesk for headings everywhere (base layer, so utilities can still
+ * override per element). */
+@layer base {
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-brutal), var(--font-sans), sans-serif;
+    letter-spacing: -0.015em;
+  }
+  h1 {
+    font-weight: 700;
+  }
+}
+
+/* Shared "pressable" behaviour for buttons and links styled as buttons:
+ * lift on hover, sink into the shadow on press. */
+.nb-press {
+  transition: transform 80ms ease, box-shadow 80ms ease, background-color 120ms ease;
+}
+.nb-press:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 0 var(--nb-ink);
+}
+.nb-press:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 0 var(--nb-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .nb-press,
+  .nb-press:hover:not(:disabled),
+  .nb-press:active:not(:disabled) {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* Keyboard focus: a clear dashed ink ring instead of a soft glow. Inputs
+ * show focus with their coloured hard shadow instead. */
+@layer base {
+  :where(a, button, [role="tab"], [tabindex]):focus-visible {
+    outline: 2px dashed var(--nb-ink);
+    outline-offset: 2px;
+  }
+}
+
 ::selection {
   background: var(--color-primary);
   color: var(--color-primary-foreground);
+}
+
+/* ------------------------------------------------------------------ *
+ * Brutalist kit (bk-*) - used by the payment screens.                 *
+ * Thick ink borders, hard offset shadows, flat bright fills, no blur.  *
+ * Bright fills always carry dark text (--bk-on-fill) so contrast holds *
+ * in both themes; only paper/ink swap in dark mode.                    *
+ * ------------------------------------------------------------------ */
+:root {
+  /* Tied to the platform tokens so payment screens match every other page. */
+  --bk-ink: var(--nb-ink);
+  --bk-paper: var(--card);
+  --bk-page: var(--background);
+  --bk-muted: var(--muted-foreground);
+  --bk-on-fill: #111111;
+  --bk-yellow: #ffd23f;
+  --bk-blue: #8fb0ff;
+  --bk-red: #ff7b7b;
+  --bk-green: #5ee08f;
+  --bk-pink: #ffa6e6;
+  --bk-orange: #ffb067;
+  /* Medium: 4px / 3px offsets (heavy brutalism would be 6-8px). */
+  --bk-shadow: 4px 4px 0 0 var(--bk-ink);
+  --bk-shadow-sm: 3px 3px 0 0 var(--bk-ink);
+}
+
+.bk-display {
+  font-family: var(--font-brutal), var(--font-sans), sans-serif;
+  letter-spacing: -0.02em;
+}
+.bk-card {
+  background: var(--bk-paper);
+  color: var(--bk-ink);
+  border: 2px solid var(--bk-ink);
+  box-shadow: var(--bk-shadow);
+}
+.bk-box {
+  border: 2px solid var(--bk-ink);
+}
+.bk-muted {
+  color: var(--bk-muted);
+}
+.bk-fill-yellow { background: var(--bk-yellow); color: var(--bk-on-fill); }
+.bk-fill-blue   { background: var(--bk-blue);   color: var(--bk-on-fill); }
+.bk-fill-red    { background: var(--bk-red);    color: var(--bk-on-fill); }
+.bk-fill-green  { background: var(--bk-green);  color: var(--bk-on-fill); }
+.bk-fill-pink   { background: var(--bk-pink);   color: var(--bk-on-fill); }
+.bk-fill-orange { background: var(--bk-orange); color: var(--bk-on-fill); }
+.bk-fill-ink    { background: var(--bk-ink);    color: var(--bk-paper); }
+.bk-fill-paper  { background: var(--bk-paper);  color: var(--bk-ink); }
+
+/* Pressable: lifts on hover, sinks into its shadow when pressed. */
+.bk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.5rem 1rem;
+  border: 2px solid var(--bk-ink);
+  box-shadow: var(--bk-shadow-sm);
+  font-family: var(--font-brutal), var(--font-sans), sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.bk-btn:hover:not(:disabled) {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 0 var(--bk-ink);
+}
+.bk-btn:active:not(:disabled) {
+  transform: translate(3px, 3px);
+  box-shadow: 0 0 0 0 var(--bk-ink);
+}
+.bk-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.bk-btn:focus-visible,
+.bk-input:focus-visible,
+.bk-tile:focus-visible {
+  outline: 2px dashed var(--bk-ink);
+  outline-offset: 3px;
+}
+
+/* Big tappable choice (payment method tiles). */
+.bk-tile {
+  border: 2px solid var(--bk-ink);
+  box-shadow: var(--bk-shadow);
+  transition: transform 80ms ease, box-shadow 80ms ease;
+  cursor: pointer;
+}
+.bk-tile:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 var(--bk-ink);
+}
+.bk-tile:active {
+  transform: translate(4px, 4px);
+  box-shadow: 0 0 0 0 var(--bk-ink);
+}
+
+.bk-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.5rem 0.75rem;
+  background: var(--bk-paper);
+  color: var(--bk-ink);
+  border: 2px solid var(--bk-ink);
+  font-size: 16px; /* no iOS zoom-on-focus */
+  outline: none;
+}
+.bk-input::placeholder {
+  color: var(--bk-muted);
+  opacity: 0.7;
+}
+.bk-input:focus {
+  box-shadow: 3px 3px 0 0 var(--bk-blue);
+}
+.bk-input[aria-invalid="true"] {
+  box-shadow: 3px 3px 0 0 var(--bk-red);
+}
+
+.bk-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.05rem 0.45rem;
+  border: 2px solid var(--bk-ink);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.bk-code {
+  background: #111111;
+  color: #f5f3ea;
+  border: 2px solid var(--bk-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 0.75rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-btn, .bk-tile { transition: none; }
+  .bk-btn:hover:not(:disabled), .bk-tile:hover { transform: none; }
 }
 
 .scrollbar-thin::-webkit-scrollbar {

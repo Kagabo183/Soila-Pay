@@ -29,7 +29,7 @@ export function NotificationViewport() {
         return (
           <div
             key={t.id}
-            className="pointer-events-auto flex items-start gap-3 rounded-lg border border-border bg-card p-4 shadow-lg animate-in"
+            className="pointer-events-auto flex items-start gap-3 rounded-md border-2 border-border bg-card p-4 shadow-lg animate-in"
           >
             <Icon className={cn("mt-0.5 h-5 w-5 shrink-0", COLORS[t.variant])} />
             <div className="flex-1">

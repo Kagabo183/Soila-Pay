@@ -28,6 +28,18 @@ const EVENT_OPTIONS = [
     desc: "Fired when a collection is acknowledged but awaiting the provider's final result.",
     tone: "warning" as const,
   },
+  {
+    id: "payment.success",
+    label: "payment.success",
+    desc: "Fired when a MoMo or card payment (Accept Payments) is paid.",
+    tone: "success" as const,
+  },
+  {
+    id: "payment.failed",
+    label: "payment.failed",
+    desc: "Fired when a MoMo or card payment fails or is cancelled.",
+    tone: "destructive" as const,
+  },
 ];
 
 function CopyButton({ text }: { text: string }) {

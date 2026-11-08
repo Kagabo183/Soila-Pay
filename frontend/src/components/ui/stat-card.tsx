@@ -12,10 +12,10 @@ export interface StatCardProps {
 }
 
 const ACCENT_MAP: Record<NonNullable<StatCardProps["accent"]>, string> = {
-  primary: "bg-primary/10 text-primary",
-  success: "bg-success/10 text-success",
-  warning: "bg-warning/10 text-warning",
-  destructive: "bg-destructive/10 text-destructive",
+  primary: "bg-[var(--bk-blue)] text-[#111111]",
+  success: "bg-[var(--bk-green)] text-[#111111]",
+  warning: "bg-[var(--bk-yellow)] text-[#111111]",
+  destructive: "bg-[var(--bk-red)] text-[#111111]",
 };
 
 export function StatCard({ label, value, change, changeLabel, icon: Icon, accent = "primary" }: StatCardProps) {
@@ -23,16 +23,16 @@ export function StatCard({ label, value, change, changeLabel, icon: Icon, accent
   return (
     <Card className="p-5">
       <div className="flex items-start justify-between">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
           {label}
         </p>
         {Icon && (
-          <span className={cn("flex h-8 w-8 items-center justify-center rounded-md", ACCENT_MAP[accent])}>
+          <span className={cn("flex h-9 w-9 items-center justify-center rounded-sm border-2 border-[var(--nb-ink)]", ACCENT_MAP[accent])}>
             <Icon className="h-4 w-4" />
           </span>
         )}
       </div>
-      <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
+      <p className="mt-2 font-[family-name:var(--font-brutal)] text-2xl font-bold tracking-tight text-foreground">{value}</p>
       {change !== undefined && (
         <div className="mt-2 flex items-center gap-1 text-xs">
           <span
