@@ -53,20 +53,30 @@ async def _current_integrator(request: Request, authorization: str = Header(...)
 
 @router.post("/signup", response_model=IntegratorSessionResponse, status_code=201)
 async def signup(body: IntegratorSignupRequest, request: Request):
-    """Sandbox-only signup - register with email to start testing immediately.
-    Going live requires POST /production/submit and admin approval."""
+    """Self-signup application (like LMBTech's "Create one"): company, owner,
+    contact, login and optional address/bank. Starts in Test Mode with a
+    sandbox key; going live requires documents + admin approval."""
     repo = request.app.state.integrator_repo
+    integrator = None
     try:
-        integrator = await repo.create_self_signup(
-            body.name, body.email, hash_password(body.password)
+        integrator = await repo.create(
+            body.name.strip(), phone_number=body.phone_number, email=body.email.strip().lower(),
+            password_hash=hash_password(body.password),
         )
+        profile = body.profile_dict()
+        profile.pop("phone_number", None)
+        if profile:
+            await repo.update_profile(integrator["id"], profile, allowed=repo.PROFILE_FIELDS + ("username",))
     except pymysql.err.IntegrityError as exc:
-        if exc.args and exc.args[0] == 1062:  # duplicate email
-            raise HTTPException(
-                status_code=409, detail="An account with this email already exists"
-            ) from exc
+        if exc.args and exc.args[0] == 1062:
+            if integrator is not None:
+                await repo.delete(integrator["id"])
+            text = str(exc.args[1]) if len(exc.args) > 1 else ""
+            what = "username" if "username" in text else "phone number" if "phone" in text else "email"
+            raise HTTPException(status_code=409, detail=f"An account with this {what} already exists") from exc
         raise
 
+    integrator = await repo.get_by_id(integrator["id"])
     token = create_session_token(integrator["id"], settings.integrator_session_secret)
     return IntegratorSessionResponse(token=token, integrator=integrator)
 

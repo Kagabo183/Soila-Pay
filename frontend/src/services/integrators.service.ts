@@ -3,6 +3,7 @@ import { MOCK_MODE, simulateLatency } from "@/lib/mock";
 import { generateIntegrators } from "@/data/mock/generators";
 import { mockDocumentStore } from "@/data/mock/mock-document-store";
 import { EMPTY_PROFILE, integratorFromApi } from "@/lib/integrator";
+import { profileInputToApi } from "@/types/api";
 import type {
   DocumentType,
   Integrator,
@@ -86,10 +87,13 @@ export const integratorsService = {
       return created;
     }
     const { data } = await apiClient.post("/api/v1/admin/integrators", {
-      name: payload.name,
+      name: payload.name.trim(),
       fee_percentage: payload.feePercentage,
-      ...(payload.phoneNumber ? { phone_number: payload.phoneNumber } : {}),
+      ...profileInputToApi(payload),
+      ...(payload.email?.trim() ? { email: payload.email.trim() } : {}),
       ...(payload.password ? { password: payload.password } : {}),
+      ...(payload.paymentFeePercentage ? { payment_fee_percentage: payload.paymentFeePercentage.toFixed(2) } : {}),
+      ...(payload.payoutFeePercentage ? { payout_fee_percentage: payload.payoutFeePercentage.toFixed(2) } : {}),
     });
     return fromApi(data);
   },
@@ -164,6 +168,7 @@ export const integratorsService = {
       ...(payload.phoneNumber !== undefined ? { phone_number: payload.phoneNumber } : {}),
       ...(payload.username !== undefined ? { username: payload.username } : {}),
       ...(payload.accountMode !== undefined ? { account_mode: payload.accountMode } : {}),
+      ...(payload.newPassword ? { new_password: payload.newPassword } : {}),
     });
     return fromApi(data);
   },

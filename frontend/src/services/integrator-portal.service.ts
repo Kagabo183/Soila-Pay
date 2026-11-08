@@ -2,6 +2,7 @@ import { apiClient } from "@/lib/axios";
 import { MOCK_MODE, simulateLatency } from "@/lib/mock";
 import { mockDocumentStore } from "@/data/mock/mock-document-store";
 import { EMPTY_PROFILE, integratorFromApi } from "@/lib/integrator";
+import { profileInputToApi } from "@/types/api";
 import type {
   DocumentType,
   Integrator,
@@ -111,9 +112,10 @@ export const integratorPortalService = {
       return { token: mockToken(integrator.id), integrator };
     }
     const { data } = await apiClient.post("/api/v1/integrator-portal/signup", {
-      name: payload.name,
-      email: payload.email,
+      name: payload.name.trim(),
+      email: payload.email.trim(),
       password: payload.password,
+      ...profileInputToApi(payload),
     });
     return { token: data.token, integrator: integratorFromApi(data.integrator) };
   },

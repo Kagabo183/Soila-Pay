@@ -28,29 +28,55 @@ async def list_integrators(request: Request):
     return await request.app.state.integrator_repo.list_integrators()
 
 
+def _duplicate_detail(exc: pymysql.err.IntegrityError) -> str:
+    text = str(exc.args[1]) if len(exc.args) > 1 else ""
+    for key, label in (("email", "email"), ("username", "username"), ("phone", "phone number")):
+        if key in text:
+            return f"Another integrator already uses this {label}"
+    return "Another integrator already uses this email, phone or username"
+
+
 @router.post("/integrators", response_model=IntegratorOut, status_code=201)
 async def create_integrator(body: IntegratorCreate, request: Request):
-    """phone_number + password are optional - set both to also hand the
-    integrator working self-service portal login credentials (they can then
-    log in at /portal/login) instead of requiring them to sign up themselves."""
-    if bool(body.phone_number) != bool(body.password):
-        raise HTTPException(
-            status_code=400,
-            detail="Set both phone_number and password together, or neither",
-        )
+    """New integrator with the full LMBTech-style profile. A password gives
+    them a working portal login (by email or username) right away; fee
+    overrides are optional (the Pricing defaults apply otherwise)."""
+    repo = request.app.state.integrator_repo
+    if body.password and not (body.email or body.username):
+        raise HTTPException(status_code=400, detail="A password needs an email or username to log in with")
+    pricing = await request.app.state.payment_service.pricing()
+    for fee, cost, what in (
+        (body.payment_fee_percentage, pricing.gateway_cost_percentage, "Collection"),
+        (body.payout_fee_percentage, pricing.payout_cost_percentage, "Payout"),
+    ):
+        if fee is not None and Decimal(fee) < cost:
+            raise HTTPException(status_code=400, detail=f"{what} fee {fee}% is below LMBTech's {cost}% cost")
     try:
-        return await request.app.state.integrator_repo.create(
-            body.name,
+        created = await repo.create(
+            body.name.strip(),
             body.fee_percentage,
             phone_number=body.phone_number,
+            email=body.email,
             password_hash=hash_password(body.password) if body.password else None,
         )
+        profile = body.profile_dict()
+        profile.pop("phone_number", None)  # already set above
+        if profile:
+            await repo.update_profile(created["id"], profile, allowed=repo.PROFILE_FIELDS + ("username",))
     except pymysql.err.IntegrityError as exc:
-        if exc.args and exc.args[0] == 1062:  # duplicate phone_number
-            raise HTTPException(
-                status_code=409, detail="An integrator with this phone number already exists"
-            ) from exc
+        if exc.args and exc.args[0] == 1062:
+            # Don't leave a half-created integrator behind if the username clashed.
+            if "created" in locals():
+                await repo.delete(created["id"])
+            raise HTTPException(status_code=409, detail=_duplicate_detail(exc)) from exc
         raise
+    if body.payment_fee_percentage is not None or body.payout_fee_percentage is not None:
+        await repo.update(
+            created["id"],
+            payment_fee_percentage=body.payment_fee_percentage,
+            payout_fee_percentage=body.payout_fee_percentage,
+        )
+    return await repo.get_by_id(created["id"])
 
 
 @router.get("/integrators/summary", response_model=list[IntegratorSummary])
@@ -87,8 +113,18 @@ async def update_integrator(integrator_id: int, body: IntegratorUpdate, request:
         payout_fee_percentage=body.payout_fee_percentage,
         clear_payout_fee=body.clear_payout_fee,
     )
+    if body.new_password:
+        await repo.set_password_hash(integrator_id, hash_password(body.new_password))
+        logger.warning("integrator_password_reset_by_admin", extra={"integrator_id": integrator_id})
     # Admin-only identity fields + Account Mode (Test / Production).
     admin_fields = body.model_dump(include={"email", "phone_number", "username", "account_mode"}, exclude_unset=True)
+    if admin_fields.get("phone_number"):
+        from app.schemas.payment import normalize_rw_phone
+
+        try:
+            admin_fields["phone_number"] = normalize_rw_phone(admin_fields["phone_number"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if admin_fields:
         try:
             await repo.update_profile(integrator_id, admin_fields, allowed=repo.ADMIN_FIELDS)

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Plus, Pencil, Copy, TrendingUp, ArrowUpRight, Users, Wallet, FileText } from "lucide-react";
 import { PricingPanel } from "@/components/payments/pricing-panel";
+import { NewIntegratorDialog } from "@/components/integrators/new-integrator-dialog";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +41,7 @@ export default function IntegratorsPage() {
   const [modeDraft, setModeDraft] = React.useState<"TEST" | "PRODUCTION">("TEST");
   const [phoneDraft, setPhoneDraft] = React.useState("");
   const [passwordDraft, setPasswordDraft] = React.useState("");
+  const [createOpen, setCreateOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [revealedKey, setRevealedKey] = React.useState<string | null>(null);
   const [documentsByIntegrator, setDocumentsByIntegrator] = React.useState<Record<number, IntegratorDocument[]>>({});
@@ -78,11 +80,7 @@ export default function IntegratorsPage() {
   }, []);
 
   function openCreate() {
-    setEditing(null);
-    setNameDraft("");
-    setPhoneDraft("");
-    setPasswordDraft("");
-    setModalOpen(true);
+    setCreateOpen(true);
   }
 
   function openEdit(integrator: Integrator) {
@@ -92,6 +90,7 @@ export default function IntegratorsPage() {
     setPhoneDraft(integrator.phoneNumber ?? "");
     setUsernameDraft(integrator.username ?? "");
     setModeDraft(integrator.accountMode);
+    setPasswordDraft("");
     setModalOpen(true);
   }
 
@@ -101,12 +100,8 @@ export default function IntegratorsPage() {
       toast({ title: "Check the form", description: "A name is required.", variant: "error" });
       return;
     }
-    if (!editing && (phoneDraft.trim() || passwordDraft) && (!phoneDraft.trim() || passwordDraft.length < 8)) {
-      toast({
-        title: "Check the login fields",
-        description: "Set both phone number and an 8+ character password, or leave both blank.",
-        variant: "error",
-      });
+    if (passwordDraft && passwordDraft.length < 8) {
+      toast({ title: "Password too short", description: "Use at least 8 characters.", variant: "error" });
       return;
     }
     setSaving(true);
@@ -122,22 +117,13 @@ export default function IntegratorsPage() {
           ...(phoneDraft.trim() && phoneDraft.trim() !== (editing.phoneNumber ?? "") ? { phoneNumber: phoneDraft.trim() } : {}),
           ...(usernameDraft.trim() && usernameDraft.trim() !== (editing.username ?? "") ? { username: usernameDraft.trim() } : {}),
           ...(modeDraft !== editing.accountMode ? { accountMode: modeDraft } : {}),
-        });
-        toast({ title: "Integrator updated", variant: "success" });
-      } else {
-        const created = await integratorsService.create({
-          name: nameDraft,
-          feePercentage: 2.2, // legacy column; real fees come from Pricing
-          ...(phoneDraft.trim() ? { phoneNumber: phoneDraft.trim(), password: passwordDraft } : {}),
+          ...(passwordDraft ? { newPassword: passwordDraft } : {}),
         });
         toast({
-          title: "Integrator created",
-          description: phoneDraft.trim()
-            ? `${created.name} can now log in to the portal with the phone number and password you set.`
-            : `${created.name} is ready to use.`,
+          title: "Integrator updated",
+          description: passwordDraft ? "New password set - share it with them securely." : undefined,
           variant: "success",
         });
-        setRevealedKey(created.sandboxApiKey);
       }
       setModalOpen(false);
       await refresh();
@@ -486,33 +472,28 @@ export default function IntegratorsPage() {
               </div>
             </>
           )}
-          {!editing && (
-            <>
-              <div className="border-t border-border pt-4">
-                <p className="text-sm font-medium text-foreground">Portal login (optional)</p>
-                <p className="text-xs text-muted-foreground">
-                  Set both to hand them working credentials for{" "}
-                  <code className="rounded bg-secondary px-1 py-0.5 font-mono">/portal/login</code> right
-                  now, instead of making them sign up themselves.
-                </p>
-              </div>
-              <Input
-                label="Phone number"
-                value={phoneDraft}
-                onChange={(e) => setPhoneDraft(e.target.value)}
-                placeholder="0788123456"
-              />
-              <Input
-                label="Password"
-                type="password"
-                value={passwordDraft}
-                onChange={(e) => setPasswordDraft(e.target.value)}
-                placeholder="At least 8 characters"
-              />
-            </>
+          {editing && (
+            <Input
+              label="Set a new password (optional)"
+              type="password"
+              value={passwordDraft}
+              onChange={(e) => setPasswordDraft(e.target.value)}
+              placeholder="Leave empty to keep their current password"
+              hint="For an integrator who forgot theirs. At least 8 characters."
+              autoComplete="new-password"
+            />
           )}
         </div>
       </Modal>
+
+      {createOpen && (
+        <NewIntegratorDialog
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            refresh();
+          }}
+        />
+      )}
 
       <Modal
         open={revealedKey !== null}

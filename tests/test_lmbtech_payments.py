@@ -364,6 +364,32 @@ async def test_bank_cashout_reserves_balance_and_refuses_overdraw():
     assert row["money"].fee_amount_rwf is None and row["amount_rwf"] == Decimal(800)
 
 
+# -- new integrator / signup forms ------------------------------------------
+
+def test_new_integrator_profile_is_cleaned():
+    from app.schemas.integrator import IntegratorCreate
+
+    i = IntegratorCreate(name="Shop", first_name="  Eric ", phone_number="+250 788 123 456", city="", bank_account="000-123")
+    assert i.phone_number == "+250788123456"  # ready for MoMo cash-outs
+    assert i.first_name == "Eric" and i.city is None
+    assert i.profile_dict() == {"first_name": "Eric", "phone_number": "+250788123456", "country": "Rwanda", "bank_account": "000-123"}
+    with pytest.raises(ValidationError):
+        IntegratorCreate(name="Shop", phone_number="12345")
+    with pytest.raises(ValidationError):
+        IntegratorCreate(name="Shop", username="no spaces allowed")
+
+
+def test_signup_requires_owner_and_contact():
+    from app.schemas.integrator import IntegratorSignupRequest
+
+    ok = IntegratorSignupRequest(name="Shop", email="a@b.rw", password="Secret123", first_name="A", last_name="B", phone_number="0788123456")
+    assert ok.phone_number == "+250788123456"
+    with pytest.raises(ValidationError):
+        IntegratorSignupRequest(name="Shop", email="a@b.rw", password="Secret123")  # no owner / phone
+    with pytest.raises(ValidationError):
+        IntegratorSignupRequest(name="Shop", email="a@b.rw", password="short", first_name="A", last_name="B", phone_number="0788123456")
+
+
 def test_unconfigured_client_refuses():
     client = LMBTechClient(Settings(lmbtech_app_key="", lmbtech_secret_key=""))
     assert client.configured is False

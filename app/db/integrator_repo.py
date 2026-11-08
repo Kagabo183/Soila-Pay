@@ -219,6 +219,12 @@ class IntegratorRepo:
                     )
         return await self.get_by_id(integrator_id)
 
+    async def delete(self, integrator_id: int) -> None:
+        """Only used to roll back a half-created integrator (no payments yet)."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("DELETE FROM integrators WHERE id = %s", (integrator_id,))
+
     async def set_password_hash(self, integrator_id: int, password_hash: str) -> None:
         async with self._pool.acquire() as conn:
             async with conn.cursor() as cur:

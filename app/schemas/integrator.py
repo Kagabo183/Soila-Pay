@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, condecimal
+from pydantic import BaseModel, Field, condecimal, field_validator
 
 ProductionStatus = Literal["NOT_SUBMITTED", "PENDING_REVIEW", "APPROVED", "REJECTED"]
 AccountMode = Literal["TEST", "PRODUCTION"]
@@ -14,18 +14,58 @@ StoredDocumentType = Literal["TAX_CLEARANCE", "RDB_CERTIFICATE", "PROFILE_IMAGE"
 _Pct = condecimal(gt=0, lt=100, decimal_places=2)
 
 
-class IntegratorCreate(BaseModel):
-    name: str = Field(..., min_length=1)
-    # Legacy column kept for the Fineract-based flow planned later; checkout
-    # payments and payouts use payment_fee_percentage / payout_fee_percentage
-    # (or the platform defaults on the Pricing page).
+_EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+_USERNAME = r"^[A-Za-z0-9._-]+$"
+
+
+class ProfileFields(BaseModel):
+    """The LMBTech-style profile, shared by admin create and self-signup."""
+
+    first_name: Optional[str] = Field(default=None, max_length=80)
+    last_name: Optional[str] = Field(default=None, max_length=80)
+    phone_number: Optional[str] = Field(default=None, max_length=20)
+    username: Optional[str] = Field(default=None, min_length=3, max_length=60, pattern=_USERNAME)
+    address: Optional[str] = Field(default=None, max_length=191)
+    location: Optional[str] = Field(default=None, max_length=120)
+    city: Optional[str] = Field(default=None, max_length=80)
+    country: Optional[str] = Field(default="Rwanda", max_length=80)
+    bank_name: Optional[str] = Field(default=None, max_length=120)
+    bank_account: Optional[str] = Field(default=None, max_length=60, pattern=r"^[0-9A-Za-z -]*$")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _blank_is_none(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
+
+    @field_validator("phone_number")
+    @classmethod
+    def _rwandan_phone(cls, v: Optional[str]) -> Optional[str]:
+        # Stored as +2507XXXXXXXX so MoMo cash-outs can use it directly.
+        if v is None:
+            return v
+        from app.schemas.payment import normalize_rw_phone
+
+        return normalize_rw_phone(v)
+
+    def profile_dict(self) -> dict:
+        return {k: v for k, v in self.model_dump(include=set(ProfileFields.model_fields)).items() if v is not None}
+
+
+class IntegratorCreate(ProfileFields):
+    """Admin "New Integrator": company + full profile, optional portal login
+    (email or username + password) and optional fee overrides."""
+
+    name: str = Field(..., min_length=1, max_length=191, description="Company / business name")
+    email: Optional[str] = Field(default=None, max_length=255, pattern=_EMAIL)
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    # Legacy column kept for the Fineract-based flow planned later.
     fee_percentage: condecimal(gt=0, decimal_places=2) = Decimal("2.20")
-    # Optional: set both together to also hand the integrator working
-    # self-service portal login credentials (POST /api/v1/integrator-portal/login)
-    # instead of making them sign up themselves at /portal/signup.
-    phone_number: Optional[str] = Field(default=None, min_length=8, max_length=20)
-    email: Optional[str] = Field(default=None, max_length=255)
-    password: Optional[str] = Field(default=None, min_length=8)
+    # Optional overrides of the platform default fees (must be >= LMBTech cost).
+    payment_fee_percentage: Optional[_Pct] = None
+    payout_fee_percentage: Optional[_Pct] = None
 
 
 class IntegratorUpdate(BaseModel):
@@ -43,6 +83,8 @@ class IntegratorUpdate(BaseModel):
     phone_number: Optional[str] = Field(default=None, min_length=8, max_length=20)
     username: Optional[str] = Field(default=None, min_length=3, max_length=60, pattern=r"^[A-Za-z0-9._-]+$")
     account_mode: Optional[AccountMode] = None
+    # Admin reset for an integrator who forgot their password.
+    new_password: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
 
 class ProfileUpdate(BaseModel):
@@ -125,10 +167,16 @@ class IntegratorSummary(BaseModel):
 # -- Self-service portal (app/api/v1/integrator_portal.py) -------------------
 
 
-class IntegratorSignupRequest(BaseModel):
-    name: str = Field(..., min_length=1, description="Business or contact name")
-    email: str = Field(..., max_length=255)
-    password: str = Field(..., min_length=8)
+class IntegratorSignupRequest(ProfileFields):
+    """Self-signup application (like LMBTech's "Create one"): company, owner,
+    contact and login are required; address and bank can be added later."""
+
+    name: str = Field(..., min_length=1, max_length=191, description="Company / business name")
+    email: str = Field(..., max_length=255, pattern=_EMAIL)
+    password: str = Field(..., min_length=8, max_length=128)
+    first_name: str = Field(..., min_length=1, max_length=80)
+    last_name: str = Field(..., min_length=1, max_length=80)
+    phone_number: str = Field(..., max_length=20)
 
 
 class IntegratorLoginRequest(BaseModel):

@@ -354,14 +354,45 @@ export interface IntegratorProfileUpdate {
   bankAccount?: string;
 }
 
-export interface IntegratorCreateRequest {
+/** Profile fields shared by admin "New Integrator" and self-signup. */
+export interface IntegratorProfileInput {
+  firstName?: string;
+  lastName?: string;
+  phoneNumber?: string;
+  username?: string;
+  address?: string;
+  location?: string;
+  city?: string;
+  country?: string;
+  bankName?: string;
+  bankAccount?: string;
+}
+
+export interface IntegratorCreateRequest extends IntegratorProfileInput {
+  /** Company / business name. */
   name: string;
   feePercentage: number;
-  // Optional: set both to also hand the integrator working self-service
-  // portal login credentials (they can then log in at /portal/login)
-  // instead of requiring them to sign up themselves at /portal/signup.
-  phoneNumber?: string;
+  /** With email or username, gives them a working portal login right away. */
+  email?: string;
   password?: string;
+  /** Optional overrides of the default fees (Pricing). */
+  paymentFeePercentage?: number;
+  payoutFeePercentage?: number;
+}
+
+/** snake_case body for the profile fields (admin create + signup). */
+export function profileInputToApi(p: IntegratorProfileInput): Record<string, string> {
+  const pairs: [keyof IntegratorProfileInput, string][] = [
+    ["firstName", "first_name"], ["lastName", "last_name"], ["phoneNumber", "phone_number"], ["username", "username"],
+    ["address", "address"], ["location", "location"], ["city", "city"], ["country", "country"],
+    ["bankName", "bank_name"], ["bankAccount", "bank_account"],
+  ];
+  const out: Record<string, string> = {};
+  for (const [k, api] of pairs) {
+    const v = p[k]?.trim();
+    if (v) out[api] = v;
+  }
+  return out;
 }
 
 export interface IntegratorUpdateRequest {
@@ -373,6 +404,8 @@ export interface IntegratorUpdateRequest {
   phoneNumber?: string;
   username?: string;
   accountMode?: "TEST" | "PRODUCTION";
+  /** Admin reset of the integrator's portal password. */
+  newPassword?: string;
 }
 
 /** Per-integrator totals from the LMBTech ledger (successful rows only). */
@@ -394,10 +427,14 @@ export interface IntegratorSummary {
 // then submits KYC to unlock a production key.
 // ---------------------------------------------------------------------------
 
-export interface IntegratorSignupPayload {
+export interface IntegratorSignupPayload extends IntegratorProfileInput {
+  /** Company / business name. */
   name: string;
   email: string;
   password: string;
+  firstName: string;
+  lastName: string;
+  phoneNumber: string;
 }
 
 export interface IntegratorLoginPayload {
