@@ -96,9 +96,11 @@ Direction = Literal["COLLECTION", "DISBURSEMENT"]
 class PaymentOut(BaseModel):
     reference_id: str
     direction: Direction
+    # True when an integrator withdrew their own balance (Cashout to MoMo/Bank).
+    is_cashout: bool = False
     status: PaymentStatus
     status_message: Optional[str] = None
-    method: Literal["MOMO", "CARD"]
+    method: Literal["MOMO", "CARD", "BANK"]
     channel: str
     amount_rwf: float
     # What the integrator is charged on this transaction.
@@ -201,6 +203,37 @@ class IntegratorPaymentFee(BaseModel):
 
 class PaymentPricingOut(PaymentPricing):
     integrators: list[IntegratorPaymentFee]
+
+
+class CashoutRequest(BaseModel):
+    """Integrator withdrawing their own balance, like LMBTech's Cashout buttons."""
+
+    destination: Literal["MOMO", "BANK"]
+    amount_rwf: int = Field(..., ge=100, le=5_000_000)
+
+
+class SettleCashout(BaseModel):
+    """Admin decision on a bank cash-out: paid (note = bank transfer
+    reference) or rejected (note = reason; money returns to the balance)."""
+
+    paid: bool
+    note: str = Field(..., min_length=2, max_length=120)
+
+
+class PeriodSummary(BaseModel):
+    """LMBTech-style header for a date range: Available Balance, Total Net,
+    Total Withdraw, Remaining Balance."""
+
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    # All-time money the integrator can withdraw now (portal only).
+    available_balance_rwf: Optional[float] = None
+    gross_rwf: float  # successful collections in the period
+    net_rwf: float  # ...minus their fees
+    withdrawn_rwf: float  # payouts + cash-outs in the period (incl. pending) + fees
+    remaining_rwf: float  # net - withdrawn, for the period
+    pending_bank_rwf: float  # bank cash-outs waiting for Soila Pay
+    transactions: int
 
 
 class ReconcileChange(BaseModel):

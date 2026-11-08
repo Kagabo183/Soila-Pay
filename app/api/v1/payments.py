@@ -14,6 +14,7 @@ Plus the public pieces a customer's browser / the gateway needs:
 """
 import json
 import logging
+from datetime import date
 from decimal import Decimal
 from typing import Literal, Optional
 
@@ -22,7 +23,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from app.api.v1.deps import require_admin
 from app.api.v1.integrator_portal import _current_integrator
 from app.schemas.payment import (
+    CashoutRequest,
     DisbursementCreate,
+    PeriodSummary,
+    SettleCashout,
     ImportRequest,
     IntegratorPaymentFee,
     Overview,
@@ -41,6 +45,7 @@ from app.schemas.payment import (
 from app.services.lmbtech_client import LMBTechError
 from app.services.payment_service import (
     DISBURSEMENT,
+    CashoutSetupError,
     DuplicateReferenceError,
     InsufficientBalanceError,
     PaymentService,
@@ -74,6 +79,7 @@ def payment_out(row: dict, *, admin: bool = False) -> PaymentOut:
     return PaymentOut(
         reference_id=row["reference_id"],
         direction=row.get("direction") or "COLLECTION",
+        is_cashout=bool(row.get("is_cashout")),
         status=row["status"],
         status_message=row.get("status_message"),
         method=row["method"],
@@ -158,9 +164,13 @@ async def _list(
     method: Optional[str] = None,
     q: Optional[str] = None,
     admin: bool = False,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    cashout: Optional[bool] = None,
 ) -> PaginatedPayments:
     rows, total = await request.app.state.payment_repo.list_paginated(
-        page, page_size, integrator_id=integrator_id, direction=direction, status=status, method=method, q=q
+        page, page_size, integrator_id=integrator_id, direction=direction, status=status, method=method, q=q,
+        date_from=date_from, date_to=date_to, cashout=cashout,
     )
     return PaginatedPayments(
         items=[payment_out(r, admin=admin) for r in rows], total=total, page=page, page_size=page_size
@@ -198,6 +208,23 @@ async def _summary(request: Request, integrator: Optional[dict], direction: Opti
         summary.margin_rwf = float(row["margin_rwf"])
         summary.integrators_below_cost = len(await repo.integrators_below_cost(pricing))
     return summary
+
+
+async def _period(request: Request, integrator: Optional[dict], date_from: Optional[date], date_to: Optional[date]) -> PeriodSummary:
+    repo = request.app.state.payment_repo
+    t = await repo.range_totals(integrator["id"] if integrator else None, date_from, date_to)
+    net, withdrawn = float(t["net_rwf"]), float(t["withdrawn_rwf"])
+    return PeriodSummary(
+        date_from=date_from.isoformat() if date_from else None,
+        date_to=date_to.isoformat() if date_to else None,
+        available_balance_rwf=float(await _service(request).available_balance(integrator["id"])) if integrator else None,
+        gross_rwf=float(t["gross_rwf"]),
+        net_rwf=net,
+        withdrawn_rwf=withdrawn,
+        remaining_rwf=net - withdrawn,
+        pending_bank_rwf=float(t["pending_bank_rwf"]),
+        transactions=int(t["n"]),
+    )
 
 
 async def _overview(request: Request, integrator: Optional[dict], days: int) -> Overview:
@@ -386,6 +413,33 @@ async def portal_summary(
     return await _summary(request, integrator, direction)
 
 
+@portal_router.get("/period", response_model=PeriodSummary)
+async def portal_period(
+    request: Request,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    integrator: dict = Depends(_current_integrator),
+):
+    """Available Balance / Total Net / Total Withdraw / Remaining for a date range."""
+    return await _period(request, integrator, date_from, date_to)
+
+
+@portal_router.post("/cashout", response_model=PaymentOut, status_code=201)
+async def portal_cashout(body: CashoutRequest, request: Request, integrator: dict = Depends(_current_integrator)):
+    """Withdraw your own balance: to your MTN MoMo number (instant, payout fee)
+    or to your bank account (Soila Pay sends the transfer)."""
+    service = _service(request)
+    if body.destination == "MOMO" and not service.payouts_configured:
+        raise HTTPException(status_code=503, detail="MoMo cash-outs are not available yet")
+    try:
+        row = await service.cashout(integrator, body.destination, body.amount_rwf)
+    except CashoutSetupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except InsufficientBalanceError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+    return payment_out(row)
+
+
 @portal_router.get("/overview", response_model=Overview)
 async def portal_overview(
     request: Request, days: int = Query(default=14, ge=1, le=90), integrator: dict = Depends(_current_integrator)
@@ -407,10 +461,14 @@ async def portal_list_payments(
     status: StatusFilter = None,
     method: MethodFilter = None,
     q: Optional[str] = Query(default=None, max_length=80),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    cashout: Optional[bool] = None,
     integrator: dict = Depends(_current_integrator),
 ):
     return await _list(
-        request, page, page_size, integrator["id"], direction=direction, status=status, method=method, q=q
+        request, page, page_size, integrator["id"], direction=direction, status=status, method=method, q=q,
+        date_from=date_from, date_to=date_to, cashout=cashout,
     )
 
 
@@ -465,6 +523,22 @@ async def admin_set_pricing(body: PaymentPricing, request: Request):
     return await _pricing_out(request)
 
 
+@admin_router.get("/period", response_model=PeriodSummary)
+async def admin_period(request: Request, date_from: Optional[date] = None, date_to: Optional[date] = None):
+    return await _period(request, None, date_from, date_to)
+
+
+@admin_router.post("/{reference_id}/settle", response_model=PaymentOut)
+async def admin_settle_cashout(reference_id: str, body: SettleCashout, request: Request):
+    """Bank cash-out: mark paid after sending the transfer (note = bank
+    reference), or reject it (note = reason; money returns to the balance)."""
+    try:
+        row = await _service(request).settle_bank_cashout(reference_id, paid=body.paid, note=body.note.strip())
+    except CashoutSetupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return payment_out(row, admin=True)
+
+
 @admin_router.post("/reconcile", response_model=ReconcileReport)
 async def admin_reconcile(request: Request, days: int = Query(default=30, ge=1, le=365)):
     """Check every transaction from the last `days` days against LMBTech and
@@ -501,9 +575,13 @@ async def admin_list_payments(
     status: StatusFilter = None,
     method: MethodFilter = None,
     q: Optional[str] = Query(default=None, max_length=80),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    cashout: Optional[bool] = None,
 ):
     return await _list(
-        request, page, page_size, None, direction=direction, status=status, method=method, q=q, admin=True
+        request, page, page_size, None, direction=direction, status=status, method=method, q=q, admin=True,
+        date_from=date_from, date_to=date_to, cashout=cashout,
     )
 
 

@@ -19,8 +19,20 @@ def _where(
     status: Optional[str] = None,
     method: Optional[str] = None,
     q: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    cashout: Optional[bool] = None,
 ) -> tuple[str, list]:
     clauses, args = [], []
+    if date_from is not None:
+        clauses.append("p.created_at >= %s")
+        args.append(datetime.combine(date_from, datetime.min.time()))
+    if date_to is not None:  # inclusive: the whole end day
+        clauses.append("p.created_at < %s")
+        args.append(datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
+    if cashout is not None:
+        clauses.append("p.is_cashout = %s")
+        args.append(int(cashout))
     if integrator_id is not None:
         clauses.append("p.integrator_id = %s")
         args.append(integrator_id)
@@ -64,20 +76,22 @@ class PaymentRepo:
         return_url: Optional[str],
         is_test: bool,
         imported: bool = False,
+        is_cashout: bool = False,
+        gateway: str = "LMBTECH",
     ) -> dict:
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
                     """
                     INSERT INTO payments
-                        (reference_id, direction, integrator_id, method, channel, amount_rwf,
+                        (reference_id, gateway, direction, is_cashout, integrator_id, method, channel, amount_rwf,
                          fee_percentage, fee_amount_rwf, gateway_cost_percentage,
                          gateway_cost_amount_rwf, margin_amount_rwf, customer_name,
                          customer_email, customer_phone, description, return_url, is_test, imported)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        reference_id, direction, integrator_id, method, channel, amount_rwf,
+                        reference_id, gateway, direction, int(is_cashout), integrator_id, method, channel, amount_rwf,
                         money.fee_percentage, money.fee_amount_rwf, money.gateway_cost_percentage,
                         money.gateway_cost_amount_rwf, money.margin_amount_rwf, customer_name,
                         customer_email, customer_phone, description, return_url, int(is_test), int(imported),
@@ -200,13 +214,14 @@ class PaymentRepo:
                 await conn.commit()
         return previous if previous != status else None
 
-    async def list_references_since(self, days: int, limit: int = 1000) -> list[str]:
+    async def list_references_since(self, days: int, limit: int = 1000, gateway: Optional[str] = None) -> list[str]:
         since = datetime.now() - timedelta(days=days)
+        extra = " AND gateway = %s" if gateway else ""
         async with self._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT reference_id FROM payments WHERE created_at >= %s ORDER BY created_at DESC LIMIT %s",
-                    (since, limit),
+                    f"SELECT reference_id FROM payments WHERE created_at >= %s{extra} ORDER BY created_at DESC LIMIT %s",
+                    (since, gateway, limit) if gateway else (since, limit),
                 )
                 return [row[0] for row in await cur.fetchall()]
 
@@ -234,8 +249,14 @@ class PaymentRepo:
         status: Optional[str] = None,
         method: Optional[str] = None,
         q: Optional[str] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        cashout: Optional[bool] = None,
     ) -> tuple[list[dict], int]:
-        clause, args = _where(integrator_id=integrator_id, direction=direction, status=status, method=method, q=q)
+        clause, args = _where(
+            integrator_id=integrator_id, direction=direction, status=status, method=method, q=q,
+            date_from=date_from, date_to=date_to, cashout=cashout,
+        )
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(f"SELECT COUNT(*) AS n FROM payments p {clause}", args)
@@ -385,12 +406,63 @@ class PaymentRepo:
                 return list(await cur.fetchall())
 
     async def list_pending_references(self, max_age_hours: int) -> list[str]:
+        """Pending LMBTech rows to poll. Bank cash-outs are excluded - they're
+        settled by an admin, LMBTech never sees them."""
         since = datetime.now() - timedelta(hours=max_age_hours)
         async with self._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT reference_id FROM payments WHERE status = 'PENDING' AND created_at >= %s "
-                    "ORDER BY created_at DESC LIMIT 200",
+                    "SELECT reference_id FROM payments WHERE status = 'PENDING' AND gateway = 'LMBTECH' "
+                    "AND created_at >= %s ORDER BY created_at DESC LIMIT 200",
                     (since,),
                 )
                 return [row[0] for row in await cur.fetchall()]
+
+    async def range_totals(
+        self, integrator_id: Optional[int], date_from: Optional[date], date_to: Optional[date]
+    ) -> dict:
+        """LMBTech-style period totals. Net = successful collections minus
+        their fees. Withdrawn = payouts/cash-outs that aren't failed (pending
+        ones reserve money) plus their fees."""
+        clause, args = _where(integrator_id=integrator_id, date_from=date_from, date_to=date_to)
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT
+                      COALESCE(SUM(CASE WHEN p.direction='COLLECTION' AND p.status='SUCCESS'
+                                        THEN p.amount_rwf - COALESCE(p.fee_amount_rwf, 0) END), 0) AS net_rwf,
+                      COALESCE(SUM(CASE WHEN p.direction='COLLECTION' AND p.status='SUCCESS' THEN p.amount_rwf END), 0) AS gross_rwf,
+                      COALESCE(SUM(CASE WHEN p.direction='DISBURSEMENT' AND p.status IN ('SUCCESS','PENDING')
+                                        THEN p.amount_rwf + COALESCE(p.fee_amount_rwf, 0) END), 0) AS withdrawn_rwf,
+                      COALESCE(SUM(CASE WHEN p.direction='DISBURSEMENT' AND p.method='BANK' AND p.status='PENDING'
+                                        THEN p.amount_rwf END), 0) AS pending_bank_rwf,
+                      COUNT(*) AS n
+                    FROM payments p {clause}
+                    """,
+                    args,
+                )
+                return await cur.fetchone()
+
+    async def settle_bank_cashout(
+        self, reference_id: str, *, paid: bool, message: str, bank_reference: Optional[str] = None
+    ) -> Optional[str]:
+        """Admin decision on a PENDING bank cash-out. Returns the new status,
+        or None if the row isn't a pending bank cash-out."""
+        status = "SUCCESS" if paid else "FAILED"
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE payments SET
+                        status = %s,
+                        status_message = %s,
+                        gateway_transaction_id = COALESCE(%s, gateway_transaction_id),
+                        completed_at = CURRENT_TIMESTAMP(3)
+                    WHERE reference_id = %s AND method = 'BANK' AND status = 'PENDING'
+                    """,
+                    (status, message[:255], (bank_reference or None) and bank_reference[:128], reference_id),
+                )
+                changed = cur.rowcount > 0
+                await conn.commit()
+        return status if changed else None

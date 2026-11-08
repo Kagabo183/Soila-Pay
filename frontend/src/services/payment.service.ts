@@ -10,9 +10,11 @@ export type Direction = "COLLECTION" | "DISBURSEMENT";
 export interface Payment {
   referenceId: string;
   direction: Direction;
+  /** The integrator withdrew their own balance (Cashout to MoMo / Bank). */
+  isCashout: boolean;
   status: PaymentStatus;
   statusMessage: string | null;
-  method: "MOMO" | "CARD";
+  method: "MOMO" | "CARD" | "BANK";
   channel: string;
   amountRwf: number;
   feePercentage: number | null;
@@ -143,8 +145,23 @@ export interface LedgerQuery {
   pageSize?: number;
   direction?: Direction;
   status?: PaymentStatus;
-  method?: "MOMO" | "CARD";
+  method?: "MOMO" | "CARD" | "BANK";
   q?: string;
+  /** YYYY-MM-DD, inclusive. */
+  dateFrom?: string;
+  dateTo?: string;
+  cashout?: boolean;
+}
+
+/** LMBTech-style header for a date range. */
+export interface PeriodSummary {
+  availableBalanceRwf: number | null;
+  grossRwf: number;
+  netRwf: number;
+  withdrawnRwf: number;
+  remainingRwf: number;
+  pendingBankRwf: number;
+  transactions: number;
 }
 
 export interface PaginatedPayments {
@@ -163,6 +180,7 @@ function fromApi(row: any): Payment {
   return {
     referenceId: row.reference_id,
     direction: row.direction ?? "COLLECTION",
+    isCashout: !!row.is_cashout,
     status: row.status,
     statusMessage: row.status_message,
     method: row.method,
@@ -264,9 +282,45 @@ export const paymentService = {
         status: query.status,
         method: query.method,
         q: query.q?.trim() || undefined,
+        date_from: query.dateFrom || undefined,
+        date_to: query.dateTo || undefined,
+        cashout: query.cashout,
       },
     });
     return { items: data.items.map(fromApi), total: data.total, page: data.page, pageSize: data.page_size };
+  },
+
+  /** Available Balance / Total Net / Total Withdraw / Remaining for a range. */
+  async period(scope: PaymentScope, dateFrom?: string, dateTo?: string): Promise<PeriodSummary> {
+    const { data } = await apiClient.get(`${base(scope)}/period`, {
+      headers: headers(scope),
+      params: { date_from: dateFrom || undefined, date_to: dateTo || undefined },
+    });
+    return {
+      availableBalanceRwf: data.available_balance_rwf ?? null,
+      grossRwf: data.gross_rwf,
+      netRwf: data.net_rwf,
+      withdrawnRwf: data.withdrawn_rwf,
+      remainingRwf: data.remaining_rwf,
+      pendingBankRwf: data.pending_bank_rwf,
+      transactions: data.transactions,
+    };
+  },
+
+  /** Portal: withdraw your own balance to your MTN MoMo number or bank account. */
+  async cashout(token: string, destination: "MOMO" | "BANK", amountRwf: number): Promise<Payment> {
+    const { data } = await apiClient.post(
+      "/api/v1/integrator-portal/payments/cashout",
+      { destination, amount_rwf: amountRwf },
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 45000 }
+    );
+    return fromApi(data);
+  },
+
+  /** Admin: mark a bank cash-out paid (note = bank reference) or rejected (note = reason). */
+  async settleCashout(referenceId: string, paid: boolean, note: string): Promise<Payment> {
+    const { data } = await apiClient.post(`/api/v1/admin/payments/${encodeURIComponent(referenceId)}/settle`, { paid, note });
+    return fromApi(data);
   },
 
   async summary(scope: PaymentScope, direction?: Direction): Promise<PaymentSummary> {

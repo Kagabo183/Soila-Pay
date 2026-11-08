@@ -1,4 +1,4 @@
-import { CreditCard } from "lucide-react";
+import { CreditCard, Landmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** Recognisable marks for payment methods. Drawn inline (no network, both
@@ -43,8 +43,18 @@ export function OtherCardLogo({ className }: { className?: string }) {
   );
 }
 
+export function BankLogo({ className }: { className?: string }) {
+  return (
+    <span className={cn(sticker, "bg-[#e8e5dc] text-[#111111]", className)} aria-label="Bank transfer">
+      <Landmark className="h-5 w-5" />
+    </span>
+  );
+}
+
 export function ChannelLogo({ channel, className }: { channel: string; className?: string }) {
   switch (channel) {
+    case "BANK":
+      return <BankLogo className={className} />;
     case "MTN":
     case "MTN_MOMO":
       return <MtnMomoLogo className={className} />;
@@ -59,6 +69,8 @@ export function ChannelLogo({ channel, className }: { channel: string; className
 
 export function channelLabel(channel: string): string {
   switch (channel) {
+    case "BANK":
+      return "Bank transfer";
     case "MTN":
     case "MTN_MOMO":
       return "MTN Mobile Money";

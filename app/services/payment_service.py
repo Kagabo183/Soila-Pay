@@ -56,6 +56,11 @@ class DuplicateReferenceError(Exception):
     pass
 
 
+class CashoutSetupError(Exception):
+    """A cash-out can't be made yet (missing phone/bank) or a bank cash-out
+    can't be settled. The message is shown to the user as-is."""
+
+
 class InsufficientBalanceError(Exception):
     def __init__(self, needed: Decimal, available: Decimal):
         self.needed = needed
@@ -216,8 +221,10 @@ class PaymentService:
 
     # -- Disbursements -------------------------------------------------------
 
-    async def create_disbursement(self, body: DisbursementCreate, integrator: Optional[dict]) -> dict:
-        reference_id = body.reference_id or new_reference("SD")
+    async def create_disbursement(
+        self, body: DisbursementCreate, integrator: Optional[dict], *, is_cashout: bool = False
+    ) -> dict:
+        reference_id = body.reference_id or new_reference("SC" if is_cashout else "SD")
         if await self._repo.get_by_reference(reference_id):
             raise DuplicateReferenceError(f"Reference {reference_id} was already used")
 
@@ -246,6 +253,7 @@ class PaymentService:
                 description=body.description or "payout",
                 return_url=None,
                 is_test=self._settings.lmbtech_test_mode,
+                is_cashout=is_cashout,
             )
 
         try:
@@ -260,6 +268,70 @@ class PaymentService:
         except LMBTechError as exc:
             return await self._fail(reference_id, exc.message)
         return await self._apply(reference_id, result)
+
+    # -- Cash-outs (integrator withdrawing their own balance) ----------------
+
+    async def cashout(self, integrator: dict, destination: str, amount_rwf: int) -> dict:
+        """Like LMBTech's "Cashout to MoMo" / "Cashout to Bank".
+        MOMO: LMBTech payout to the integrator's own MTN number (payout fee applies).
+        BANK: a request an admin settles by bank transfer; no fee, the amount is
+        reserved from the balance until it's paid or rejected."""
+        owner = " ".join(filter(None, [integrator.get("first_name"), integrator.get("last_name")])) or integrator["name"]
+        if destination == "MOMO":
+            phone = integrator.get("phone_number")
+            if not phone:
+                raise CashoutSetupError("No MTN number on your account yet - ask Soila Pay to add your phone number.")
+            try:
+                body = DisbursementCreate(
+                    amount_rwf=amount_rwf, recipient_name=owner, recipient_phone=phone, description="Cash-out to MoMo"
+                )
+            except ValueError as exc:
+                raise CashoutSetupError(f"Your phone {phone} can't receive MoMo payouts (MTN 078/079 only).") from exc
+            return await self.create_disbursement(body, integrator, is_cashout=True)
+
+        bank, account = integrator.get("bank_name"), integrator.get("bank_account")
+        if not bank or not account:
+            raise CashoutSetupError("Add your bank name and account number on the Account page first.")
+        amount = Decimal(amount_rwf)
+        reference_id = new_reference("SB")
+        async with self._payout_locks[integrator["id"]]:
+            available = await self._repo.integrator_balance(integrator["id"])
+            if amount > available:
+                raise InsufficientBalanceError(amount, available)
+            await self._repo.create(
+                reference_id=reference_id,
+                direction=DISBURSEMENT,
+                integrator_id=integrator["id"],
+                method="BANK",
+                channel="BANK",
+                amount_rwf=amount,
+                money=compute_money(amount, None, Decimal(0)),
+                customer_name=owner,
+                customer_email=integrator.get("email") or "",
+                customer_phone=None,
+                description=f"Cash-out to {bank} {account}"[:120],
+                return_url=None,
+                is_test=self._settings.lmbtech_test_mode,
+                is_cashout=True,
+                gateway="MANUAL",
+            )
+        await self._repo.update_gateway_state(
+            reference_id, status="PENDING", status_message="Waiting for Soila Pay to send the bank transfer"
+        )
+        return await self._repo.get_by_reference(reference_id)
+
+    async def settle_bank_cashout(self, reference_id: str, *, paid: bool, note: str) -> dict:
+        """Admin: mark a bank cash-out paid (note = bank transfer reference) or
+        rejected (note = reason; the money goes back to the balance)."""
+        message = f"Paid by bank transfer (ref {note})" if paid else f"Rejected: {note}"
+        status = await self._repo.settle_bank_cashout(
+            reference_id, paid=paid, message=message, bank_reference=note if paid else None
+        )
+        if status is None:
+            raise CashoutSetupError("This is not a pending bank cash-out")
+        row = await self._repo.get_by_reference(reference_id)
+        await self._notify(row)
+        return row
 
     # -- Shared --------------------------------------------------------------
 
@@ -286,7 +358,8 @@ class PaymentService:
         """Ask the gateway for the real status and record it. Safe to call
         repeatedly; a no-op once the row is final."""
         row = await self._repo.get_by_reference(reference_id)
-        if row is None or row["status"] in TERMINAL_STATUSES:
+        # Bank cash-outs are settled by an admin, not LMBTech.
+        if row is None or row["status"] in TERMINAL_STATUSES or row.get("gateway") != "LMBTECH":
             return row
         try:
             result = await self._gateway.get_status(reference_id)
@@ -345,7 +418,8 @@ class PaymentService:
         }
 
     async def reconcile_all(self, days: int) -> dict:
-        refs = await self._repo.list_references_since(days)
+        # Only rows that went through LMBTech (not bank cash-outs).
+        refs = await self._repo.list_references_since(days, gateway="LMBTECH")
         changes, errors = [], []
         for ref in refs:
             outcome = await self.reconcile(ref)

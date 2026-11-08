@@ -301,6 +301,69 @@ async def test_payout_refused_when_integrator_balance_too_low():
     assert Repo.created is False
 
 
+# -- cash-outs (integrator withdrawing their own balance) -------------------
+
+def _cashout_service(balance="1000.00"):
+    from collections import defaultdict
+    import asyncio as _asyncio
+
+    from app.services.payment_service import PaymentService
+
+    class Repo:
+        created: list = []
+
+        async def integrator_balance(self, integrator_id):
+            return Decimal(balance)
+
+        async def create(self, **kw):
+            Repo.created.append(kw)
+
+        async def update_gateway_state(self, *a, **kw):
+            return False
+
+        async def get_by_reference(self, ref):
+            return {"reference_id": ref, "status": "PENDING"}
+
+    svc = PaymentService.__new__(PaymentService)
+    svc._repo, svc._settings = Repo(), Settings()
+    svc._payout_locks = defaultdict(_asyncio.Lock)
+    Repo.created = []
+    return svc, Repo
+
+
+async def test_bank_cashout_needs_bank_details():
+    from app.services.payment_service import CashoutSetupError
+
+    svc, _ = _cashout_service()
+    with pytest.raises(CashoutSetupError, match="bank"):
+        await svc.cashout({"id": 1, "name": "Shop", "bank_name": None, "bank_account": None}, "BANK", 500)
+
+
+async def test_momo_cashout_needs_an_mtn_phone():
+    from app.services.payment_service import CashoutSetupError
+
+    svc, _ = _cashout_service()
+    with pytest.raises(CashoutSetupError, match="No MTN number"):
+        await svc.cashout({"id": 1, "name": "Shop", "phone_number": None}, "MOMO", 500)
+    with pytest.raises(CashoutSetupError, match="MTN 078/079"):
+        await svc.cashout({"id": 1, "name": "Shop", "phone_number": "0721234567"}, "MOMO", 500)
+
+
+async def test_bank_cashout_reserves_balance_and_refuses_overdraw():
+    from app.services.payment_service import InsufficientBalanceError
+
+    svc, Repo = _cashout_service(balance="1000.00")
+    integ = {"id": 1, "name": "Shop", "bank_name": "BK", "bank_account": "123", "email": "s@x.rw"}
+    with pytest.raises(InsufficientBalanceError):
+        await svc.cashout(integ, "BANK", 1500)
+    assert Repo.created == []
+    await svc.cashout(integ, "BANK", 800)
+    row = Repo.created[0]
+    # Manual bank transfer: no LMBTech, no fee, flagged as a cash-out.
+    assert row["method"] == "BANK" and row["gateway"] == "MANUAL" and row["is_cashout"] is True
+    assert row["money"].fee_amount_rwf is None and row["amount_rwf"] == Decimal(800)
+
+
 def test_unconfigured_client_refuses():
     client = LMBTechClient(Settings(lmbtech_app_key="", lmbtech_secret_key=""))
     assert client.configured is False
