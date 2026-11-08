@@ -219,7 +219,15 @@ async def list_transactions(
 
 class WebhookCreate(BaseModel):
     callback_url: HttpUrl
-    events: list[Literal["collection.success", "collection.failed", "collection.pending"]]
+    events: list[
+        Literal[
+            "collection.success",
+            "collection.failed",
+            "collection.pending",
+            "payment.success",
+            "payment.failed",
+        ]
+    ]
 
 
 class WebhookOut(BaseModel):

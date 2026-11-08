@@ -52,6 +52,34 @@ async def _deliver_one(callback_url: str, secret: str, event: str, payload: dict
         )
 
 
+def _build_payment_payload(event: str, row: dict) -> dict:
+    def _iso(value):
+        return value.isoformat() if value else None
+
+    return {
+        "event": event,
+        "reference_id": row.get("reference_id"),
+        "status": row.get("status"),
+        "method": row.get("method"),
+        "channel": row.get("channel"),
+        "amount_rwf": float(row["amount_rwf"]) if row.get("amount_rwf") is not None else None,
+        "customer_name": row.get("customer_name"),
+        "gateway_transaction_id": row.get("gateway_transaction_id"),
+        "message": row.get("status_message"),
+        "is_test": bool(row.get("is_test")),
+        "created_at": _iso(row.get("created_at")),
+        "completed_at": _iso(row.get("completed_at")),
+    }
+
+
+async def dispatch_payment(webhook_rows: list[dict], event: str, row: dict) -> None:
+    payload = _build_payment_payload(event, row)
+    for webhook in webhook_rows:
+        asyncio.create_task(
+            _deliver_one(webhook["callback_url"], webhook["secret"], event, payload)
+        )
+
+
 async def dispatch(webhook_rows: list[dict], event: str, row: dict) -> None:
     payload = _build_payload(event, row)
     for webhook in webhook_rows:

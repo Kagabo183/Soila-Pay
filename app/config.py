@@ -75,6 +75,29 @@ class Settings(BaseSettings):
     collection_reconciliation_enabled: bool = True
     collection_reconciliation_interval_seconds: float = 30.0
 
+    # LMBTech payment gateway - MTN MoMo + card (Visa/Mastercard via Pesapal).
+    # Basic auth = base64(app_key:secret_key). The test keys from LMBTech's
+    # public docs are the defaults in .env.example; swap for live keys.
+    lmbtech_base_url: str = "https://pay.lmbtech.rw/pay/config/api.php"
+    lmbtech_app_key: str = ""
+    lmbtech_secret_key: str = ""
+    # True while using LMBTech's test keys - marks payments as test in the UI.
+    lmbtech_test_mode: bool = True
+    # LMBTech holds a MoMo request open while the customer approves on their
+    # phone (observed >40s live). We don't make the caller wait for that: past
+    # this timeout the payment is treated as PENDING and resolved by polling.
+    lmbtech_timeout_seconds: float = 20.0
+    # Public URL of THIS API, used to build the callback_url LMBTech posts to.
+    # localhost works for local dev only via polling (LMBTech can't reach it).
+    public_api_base_url: str = "http://localhost:8000"
+    # Public URL of the web app - card payers land on {this}/pay/return.
+    frontend_base_url: str = "http://localhost:3000"
+    # Background poll of PENDING payments (covers callbacks that never arrive).
+    payment_reconciliation_enabled: bool = True
+    payment_reconciliation_interval_seconds: float = 20.0
+    # Stop polling a payment that's still PENDING after this long.
+    payment_reconciliation_max_age_hours: int = 24
+
     # Rollback retry
     refund_max_attempts: int = 5
     refund_backoff_base_seconds: float = 1.0

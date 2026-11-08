@@ -12,6 +12,9 @@ from app.api.v1.collection import router as collection_router
 from app.api.v1.ddin_diagnostics import router as ddin_diagnostics_router
 from app.api.v1.deps import require_admin
 from app.api.v1.integrator_portal import router as integrator_portal_router
+from app.api.v1.payments import admin_router as payments_admin_router
+from app.api.v1.payments import portal_router as payments_portal_router
+from app.api.v1.payments import router as payments_router
 from app.api.v1.providers import router as providers_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.config import settings
@@ -20,11 +23,14 @@ from app.db.ddin_diagnostics_repo import DdinDiagnosticsRepo
 from app.db.integrator_document_repo import IntegratorDocumentRepo
 from app.db.integrator_repo import IntegratorRepo
 from app.db.integrator_webhook_repo import IntegratorWebhookRepo
+from app.db.payment_repo import PaymentRepo
 from app.db.transaction_log_repo import TransactionLogRepo
 from app.logging_conf import configure_logging
 from app.services.collection_orchestrator import CollectionOrchestrator
 from app.services.collection_provider import get_collection_provider
 from app.services.fineract_client import FineractClient
+from app.services.lmbtech_client import LMBTechClient
+from app.services.payment_service import PaymentService
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -60,6 +66,24 @@ async def _reconciliation_loop(app: FastAPI, interval_seconds: float) -> None:
         await asyncio.sleep(interval_seconds)
 
 
+async def _payment_reconciliation_loop(app: FastAPI, interval_seconds: float, max_age_hours: int) -> None:
+    """Polls the gateway for PENDING checkout payments - LMBTech's callback
+    can't reach localhost, and callbacks can be lost in production too."""
+    while True:
+        try:
+            refs = await app.state.payment_repo.list_pending_references(max_age_hours)
+            for ref in refs:
+                try:
+                    await app.state.payment_service.sync(ref)
+                except Exception:
+                    logger.exception("payment_reconciliation_failed", extra={"reference_id": ref})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("payment_reconciliation_loop_error")
+        await asyncio.sleep(interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     pool = await create_pool(settings)
@@ -78,6 +102,20 @@ async def lifespan(app: FastAPI):
     app.state.integrator_document_repo = integrator_document_repo
     app.state.integrator_webhook_repo = integrator_webhook_repo
     app.state.ddin_diagnostics_repo = DdinDiagnosticsRepo(pool)
+    app.state.settings = settings
+    lmbtech_client = LMBTechClient(settings)
+    app.state.payment_repo = PaymentRepo(pool)
+    app.state.payment_service = PaymentService(
+        settings=settings,
+        repo=app.state.payment_repo,
+        gateway=lmbtech_client,
+        webhook_repo=integrator_webhook_repo,
+    )
+    if not lmbtech_client.configured:
+        logger.warning(
+            "LMBTECH_APP_KEY / LMBTECH_SECRET_KEY are not set - card and MoMo "
+            "checkout payments are disabled until they are."
+        )
     app.state.orchestrator = CollectionOrchestrator(
         settings=settings,
         repo=repo,
@@ -118,14 +156,26 @@ async def lifespan(app: FastAPI):
             _reconciliation_loop(app, settings.collection_reconciliation_interval_seconds)
         )
 
+    payment_task = None
+    if settings.payment_reconciliation_enabled and lmbtech_client.configured:
+        payment_task = asyncio.create_task(
+            _payment_reconciliation_loop(
+                app,
+                settings.payment_reconciliation_interval_seconds,
+                settings.payment_reconciliation_max_age_hours,
+            )
+        )
+
     logger.info("startup_complete", extra={"app_env": settings.app_env})
     try:
         yield
     finally:
-        if reconciliation_task is not None:
-            reconciliation_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await reconciliation_task
+        for task in (reconciliation_task, payment_task):
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+        await lmbtech_client.aclose()
         await fineract_client.aclose()
         await collection_provider.aclose()
         await close_pool(pool)
@@ -143,6 +193,11 @@ app.add_middleware(
 )
 
 app.include_router(collection_router, prefix="/api/v1/collection", tags=["collection"])
+app.include_router(payments_router, prefix="/api/v1/payments", tags=["payments"])
+app.include_router(
+    payments_portal_router, prefix="/api/v1/integrator-portal/payments", tags=["payments-portal"]
+)
+app.include_router(payments_admin_router, prefix="/api/v1/admin/payments", tags=["payments-admin"])
 app.include_router(admin_auth_router, prefix="/api/v1/admin/auth", tags=["admin-auth"])
 app.include_router(
     admin_router, prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin)]
