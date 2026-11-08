@@ -65,7 +65,16 @@ class IntegratorDocumentRepo:
                 )
                 return await cur.fetchall()
 
+    async def delete(self, integrator_id: int, document_type: str) -> None:
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "DELETE FROM integrator_documents WHERE integrator_id = %s AND document_type = %s",
+                    (integrator_id, document_type),
+                )
+
     async def has_all_required(self, integrator_id: int) -> bool:
+        # KYC only - the profile picture is optional and doesn't count.
         uploaded = await self.list_metadata(integrator_id)
         uploaded_types = {row["document_type"] for row in uploaded}
         return uploaded_types.issuperset(DOCUMENT_TYPES)

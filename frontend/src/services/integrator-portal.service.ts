@@ -1,12 +1,13 @@
 import { apiClient } from "@/lib/axios";
 import { MOCK_MODE, simulateLatency } from "@/lib/mock";
 import { mockDocumentStore } from "@/data/mock/mock-document-store";
+import { EMPTY_PROFILE, integratorFromApi } from "@/lib/integrator";
 import type {
-  CollectionTransaction,
   DocumentType,
   Integrator,
   IntegratorDocument,
   IntegratorLoginPayload,
+  IntegratorProfileUpdate,
   IntegratorSession,
   IntegratorSignupPayload,
   IntegratorWebhook,
@@ -14,51 +15,6 @@ import type {
   ProductionKycPayload,
 } from "@/types/api";
 
-interface PaginatedTransactions {
-  items: CollectionTransaction[];
-  total: number;
-  page: number;
-  page_size: number;
-}
-
-// snake_case <-> camelCase at the edge, matching app/schemas/integrator.py.
-function integratorFromApi(row: {
-  id: number;
-  name: string;
-  sandbox_api_key: string;
-  production_api_key: string | null;
-  production_status: Integrator["productionStatus"];
-  production_rejection_reason: string | null;
-  email: string | null;
-  phone_number: string | null;
-  business_location: string | null;
-  tax_clearance_reference: string | null;
-  rdb_certificate_reference: string | null;
-  ip_whitelist: string | null;
-  fee_percentage: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}): Integrator {
-  return {
-    id: row.id,
-    name: row.name,
-    sandboxApiKey: row.sandbox_api_key,
-    productionApiKey: row.production_api_key,
-    productionStatus: row.production_status,
-    productionRejectionReason: row.production_rejection_reason,
-    email: row.email,
-    phoneNumber: row.phone_number,
-    businessLocation: row.business_location,
-    taxClearanceReference: row.tax_clearance_reference,
-    rdbCertificateReference: row.rdb_certificate_reference,
-    ipWhitelist: row.ip_whitelist,
-    feePercentage: row.fee_percentage,
-    isActive: row.is_active,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
 
 function documentFromApi(row: {
   document_type: DocumentType;
@@ -104,6 +60,7 @@ const MOCK_ACCOUNTS: MockAccount[] = [
       ipWhitelist: null,
       feePercentage: 2.2,
       isActive: true,
+      ...EMPTY_PROFILE,
       createdAt: DEMO_ACCOUNT_CREATED_AT,
       updatedAt: DEMO_ACCOUNT_CREATED_AT,
     },
@@ -146,6 +103,7 @@ export const integratorPortalService = {
         ipWhitelist: null,
         feePercentage: 2.2,
         isActive: true,
+        ...EMPTY_PROFILE,
         createdAt: now,
         updatedAt: now,
       };
@@ -215,54 +173,81 @@ export const integratorPortalService = {
     return (data as Parameters<typeof documentFromApi>[0][]).map(documentFromApi);
   },
 
-  /** GET /api/v1/integrator-portal/transactions - paginated history for the
-   * calling integrator, newest first. */
-  async listTransactions(
-    token: string,
-    page = 1,
-    pageSize = 20
-  ): Promise<PaginatedTransactions> {
-    if (MOCK_MODE) {
-      await simulateLatency(150, 300);
-      return { items: [], total: 0, page, page_size: pageSize };
-    }
-    const { data } = await apiClient.get("/api/v1/integrator-portal/transactions", {
-      headers: { Authorization: `Bearer ${token}` },
-      params: { page, pageSize },
+  // Transaction history: see paymentService.list (the LMBTech ledger).
+
+  /** GET /api/v1/integrator-portal/me - fresh copy of the account. */
+  async me(token: string): Promise<Integrator> {
+    const { data } = await apiClient.get("/api/v1/integrator-portal/me", { headers: { Authorization: `Bearer ${token}` } });
+    return integratorFromApi(data);
+  },
+
+  /** PATCH /api/v1/integrator-portal/me - profile + bank details. */
+  async updateProfile(token: string, p: IntegratorProfileUpdate): Promise<Integrator> {
+    const body: Record<string, string> = {};
+    const map: [keyof IntegratorProfileUpdate, string][] = [
+      ["firstName", "first_name"], ["lastName", "last_name"], ["company", "company"], ["address", "address"],
+      ["location", "location"], ["city", "city"], ["country", "country"], ["bankName", "bank_name"], ["bankAccount", "bank_account"],
+    ];
+    for (const [k, api] of map) if (p[k] !== undefined) body[api] = p[k] as string;
+    const { data } = await apiClient.patch("/api/v1/integrator-portal/me", body, { headers: { Authorization: `Bearer ${token}` } });
+    return integratorFromApi(data);
+  },
+
+  /** POST /api/v1/integrator-portal/me/password */
+  async changePassword(token: string, currentPassword: string, newPassword: string): Promise<void> {
+    await apiClient.post(
+      "/api/v1/integrator-portal/me/password",
+      { current_password: currentPassword, new_password: newPassword },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+  },
+
+  /** POST /api/v1/integrator-portal/me/rotate-keys - old keys stop working immediately. */
+  async rotateKeys(token: string, currentPassword: string): Promise<Integrator> {
+    const { data } = await apiClient.post(
+      "/api/v1/integrator-portal/me/rotate-keys",
+      { current_password: currentPassword },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return integratorFromApi(data);
+  },
+
+  async uploadProfileImage(token: string, file: File): Promise<void> {
+    const form = new FormData();
+    form.append("file", file);
+    await apiClient.post("/api/v1/integrator-portal/me/profile-image", form, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" },
     });
-    return {
-      items: (data.items as Array<{
-        id: string;
-        idempotency_key: string;
-        fineract_savings_account_id: string;
-        provider: string;
-        customer_account_number: string;
-        customer_name: string;
-        amount_rwf: number;
-        status: CollectionTransaction["status"];
-        debit_transaction_id: string | null;
-        refund_transaction_id: string | null;
-        provider_transaction_reference: string | null;
-        created_at: string;
-      }>).map((row) => ({
-        id: row.id,
-        idempotencyKey: row.idempotency_key,
-        fineractSavingsAccountId: row.fineract_savings_account_id,
-        provider: row.provider,
-        customerAccountNumber: row.customer_account_number,
-        customerName: row.customer_name,
-        amountRwf: row.amount_rwf,
-        status: row.status,
-        debitTransactionId: row.debit_transaction_id,
-        refundTransactionId: row.refund_transaction_id,
-        providerTransactionReference: row.provider_transaction_reference,
-        channel: row.provider as CollectionTransaction["channel"],
-        createdAt: row.created_at,
-      })),
-      total: data.total,
-      page: data.page,
-      page_size: data.page_size,
-    };
+  },
+
+  async removeProfileImage(token: string): Promise<void> {
+    await apiClient.delete("/api/v1/integrator-portal/me/profile-image", { headers: { Authorization: `Bearer ${token}` } });
+  },
+
+  /** Object URL for the profile picture, or null if none uploaded. */
+  async profileImageUrl(token: string): Promise<string | null> {
+    try {
+      const { data } = await apiClient.get("/api/v1/integrator-portal/me/profile-image", {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: "blob",
+      });
+      return URL.createObjectURL(data);
+    } catch {
+      return null;
+    }
+  },
+
+  /** Object URL for one of the integrator's own documents (e.g. RDB certificate). */
+  async documentUrl(token: string, documentType: DocumentType): Promise<string | null> {
+    try {
+      const { data } = await apiClient.get(`/api/v1/integrator-portal/production/documents/${documentType}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: "blob",
+      });
+      return URL.createObjectURL(data);
+    } catch {
+      return null;
+    }
   },
 
   /** POST /api/v1/integrator-portal/webhooks - register a callback URL. */

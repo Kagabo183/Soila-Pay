@@ -34,6 +34,10 @@ export default function IntegratorsPage() {
   const [modalOpen, setModalOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Integrator | null>(null);
   const [nameDraft, setNameDraft] = React.useState("");
+  // Admin-only identity fields + Account Mode (edit only).
+  const [emailDraft, setEmailDraft] = React.useState("");
+  const [usernameDraft, setUsernameDraft] = React.useState("");
+  const [modeDraft, setModeDraft] = React.useState<"TEST" | "PRODUCTION">("TEST");
   const [phoneDraft, setPhoneDraft] = React.useState("");
   const [passwordDraft, setPasswordDraft] = React.useState("");
   const [saving, setSaving] = React.useState(false);
@@ -84,6 +88,10 @@ export default function IntegratorsPage() {
   function openEdit(integrator: Integrator) {
     setEditing(integrator);
     setNameDraft(integrator.name);
+    setEmailDraft(integrator.email ?? "");
+    setPhoneDraft(integrator.phoneNumber ?? "");
+    setUsernameDraft(integrator.username ?? "");
+    setModeDraft(integrator.accountMode);
     setModalOpen(true);
   }
 
@@ -104,7 +112,17 @@ export default function IntegratorsPage() {
     setSaving(true);
     try {
       if (editing) {
-        await integratorsService.update(editing.id, { name: nameDraft });
+        if (modeDraft === "PRODUCTION" && editing.accountMode !== "PRODUCTION" && !editing.productionApiKey) {
+          toast({ title: "Approve Go Live first", description: "Production mode needs a production key, issued when you approve their Go Live request.", variant: "error" });
+          return;
+        }
+        await integratorsService.update(editing.id, {
+          name: nameDraft,
+          ...(emailDraft.trim() && emailDraft.trim() !== (editing.email ?? "") ? { email: emailDraft.trim() } : {}),
+          ...(phoneDraft.trim() && phoneDraft.trim() !== (editing.phoneNumber ?? "") ? { phoneNumber: phoneDraft.trim() } : {}),
+          ...(usernameDraft.trim() && usernameDraft.trim() !== (editing.username ?? "") ? { username: usernameDraft.trim() } : {}),
+          ...(modeDraft !== editing.accountMode ? { accountMode: modeDraft } : {}),
+        });
         toast({ title: "Integrator updated", variant: "success" });
       } else {
         const created = await integratorsService.create({
@@ -131,6 +149,17 @@ export default function IntegratorsPage() {
   }
 
   async function handleToggleActive(integrator: Integrator) {
+    // A disabled integrator's payments and payouts stop immediately, so a
+    // stray click on the status badge must never do this silently.
+    const ok = await confirm({
+      title: integrator.isActive ? `Disable ${integrator.name}?` : `Enable ${integrator.name}?`,
+      description: integrator.isActive
+        ? "Their API keys stop working right away: no more payments or payouts until you enable them again."
+        : "Their API keys start working again.",
+      confirmLabel: integrator.isActive ? "Disable" : "Enable",
+      destructive: integrator.isActive,
+    });
+    if (!ok) return;
     await integratorsService.update(integrator.id, { isActive: !integrator.isActive });
     toast({
       title: integrator.isActive ? "Integrator disabled" : "Integrator enabled",
@@ -180,7 +209,23 @@ export default function IntegratorsPage() {
   );
 
   const columns: Column<Integrator>[] = [
-    { key: "name", header: "Integrator", render: (row) => <span className="font-medium">{row.name}</span> },
+    {
+      key: "name",
+      header: "Integrator",
+      render: (row) => (
+        <div className="min-w-0">
+          <p className="font-medium">{row.name}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {[[row.firstName, row.lastName].filter(Boolean).join(" "), row.email].filter(Boolean).join(" · ") || "—"}
+          </p>
+          {row.bankName && (
+            <p className="truncate text-[11px] text-muted-foreground">
+              Bank: {row.bankName} {row.bankAccount}
+            </p>
+          )}
+        </div>
+      ),
+    },
     {
       key: "sandboxApiKey",
       header: "Sandbox Key",
@@ -202,11 +247,21 @@ export default function IntegratorsPage() {
       header: "Status",
       align: "center",
       render: (row) => (
-        <button onClick={() => handleToggleActive(row)}>
+        <button onClick={() => handleToggleActive(row)} title={row.isActive ? "Click to disable (asks first)" : "Click to enable"}>
           <StatusBadge variant={row.isActive ? "success" : "outline"}>
             {row.isActive ? "ACTIVE" : "DISABLED"}
           </StatusBadge>
         </button>
+      ),
+    },
+    {
+      key: "accountMode",
+      header: "Mode",
+      align: "center",
+      render: (row) => (
+        <StatusBadge variant={row.accountMode === "PRODUCTION" ? "success" : "warning"} dot={false}>
+          {row.accountMode === "PRODUCTION" ? "PRODUCTION" : "TEST"}
+        </StatusBadge>
       ),
     },
     {
@@ -405,6 +460,32 @@ export default function IntegratorsPage() {
             placeholder="Acme Shop"
             hint="Fees are set in the Pricing section of this page."
           />
+          {editing && (
+            <>
+              <Input label="Email" type="email" value={emailDraft} onChange={(e) => setEmailDraft(e.target.value)} hint="Their login. Only admins can change it." />
+              <Input label="Phone" value={phoneDraft} onChange={(e) => setPhoneDraft(e.target.value)} placeholder="+250788123456" />
+              <Input label="Username" value={usernameDraft} onChange={(e) => setUsernameDraft(e.target.value)} hint="Letters, numbers, . _ - (they can log in with it)" />
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-semibold text-foreground">Account Mode</span>
+                <div className="flex gap-2">
+                  {(["TEST", "PRODUCTION"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setModeDraft(m)}
+                      aria-pressed={modeDraft === m}
+                      className={`nb-press flex-1 rounded-sm border-2 border-[var(--nb-ink)] px-3 py-2 text-sm font-bold shadow-sm ${
+                        modeDraft === m ? (m === "PRODUCTION" ? "bg-[var(--bk-green)] text-[#111]" : "bg-[var(--bk-yellow)] text-[#111]") : "bg-card"
+                      }`}
+                    >
+                      {m === "TEST" ? "Test Mode" : "Production"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">Test: only their sandbox key works. Production: their production key works too.</p>
+              </div>
+            </>
+          )}
           {!editing && (
             <>
               <div className="border-t border-border pt-4">

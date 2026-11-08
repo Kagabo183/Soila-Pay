@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.exceptions import FineractError
 from app.schemas.integrator import (
-    DocumentType,
+    StoredDocumentType,
     IntegratorCreate,
     IntegratorDocumentOut,
     IntegratorOut,
@@ -77,7 +77,7 @@ async def update_integrator(integrator_id: int, body: IntegratorUpdate, request:
                 status_code=400,
                 detail=f"{label} fee {fee}% is below LMBTech's {cost}% cost - every {noun} would lose money.",
             )
-    return await repo.update(
+    await repo.update(
         integrator_id,
         name=body.name,
         fee_percentage=body.fee_percentage,
@@ -87,6 +87,16 @@ async def update_integrator(integrator_id: int, body: IntegratorUpdate, request:
         payout_fee_percentage=body.payout_fee_percentage,
         clear_payout_fee=body.clear_payout_fee,
     )
+    # Admin-only identity fields + Account Mode (Test / Production).
+    admin_fields = body.model_dump(include={"email", "phone_number", "username", "account_mode"}, exclude_unset=True)
+    if admin_fields:
+        try:
+            await repo.update_profile(integrator_id, admin_fields, allowed=repo.ADMIN_FIELDS)
+        except pymysql.err.IntegrityError as exc:
+            if exc.args and exc.args[0] == 1062:
+                raise HTTPException(status_code=409, detail="That email, phone or username is already used by another integrator") from exc
+            raise
+    return await repo.get_by_id(integrator_id)
 
 
 @router.post("/integrators/{integrator_id}/approve-production", response_model=IntegratorOut)
@@ -125,7 +135,7 @@ async def list_integrator_documents(integrator_id: int, request: Request):
 
 @router.get("/integrators/{integrator_id}/documents/{document_type}")
 async def download_integrator_document(
-    integrator_id: int, document_type: DocumentType, request: Request
+    integrator_id: int, document_type: StoredDocumentType, request: Request
 ):
     doc = await request.app.state.integrator_document_repo.get(integrator_id, document_type)
     if doc is None:

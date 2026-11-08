@@ -39,6 +39,12 @@ class IntegratorRepo:
                 )
                 return await cur.fetchone()
 
+    async def get_by_username(self, username: str) -> Optional[dict]:
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute("SELECT * FROM integrators WHERE username = %s", (username,))
+                return await cur.fetchone()
+
     async def get_by_api_key(self, api_key: str) -> Optional[dict]:
         """Matches either sandbox_api_key or production_api_key. The returned
         dict carries a synthetic `key_mode` ("sandbox"|"production") for
@@ -192,6 +198,46 @@ class IntegratorRepo:
                     WHERE id = %s
                     """,
                     (production_api_key, integrator_id),
+                )
+        return await self.get_by_id(integrator_id)
+
+    # -- Profile (portal self-service + admin-only fields) ----------------------
+
+    PROFILE_FIELDS = ("first_name", "last_name", "name", "address", "location", "city", "country", "bank_name", "bank_account")
+    ADMIN_FIELDS = ("email", "phone_number", "username", "account_mode")
+
+    async def update_profile(self, integrator_id: int, fields: dict, *, allowed: tuple[str, ...]) -> Optional[dict]:
+        """Update only whitelisted columns (portal: PROFILE_FIELDS; admin
+        additionally ADMIN_FIELDS). Empty strings clear optional values."""
+        values = {k: (v.strip() or None) if isinstance(v, str) else v for k, v in fields.items() if k in allowed}
+        if values:
+            set_clause = ", ".join(f"{col} = %s" for col in values)
+            async with self._pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"UPDATE integrators SET {set_clause} WHERE id = %s", [*values.values(), integrator_id]
+                    )
+        return await self.get_by_id(integrator_id)
+
+    async def set_password_hash(self, integrator_id: int, password_hash: str) -> None:
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("UPDATE integrators SET password_hash = %s WHERE id = %s", (password_hash, integrator_id))
+
+    async def rotate_keys(self, integrator_id: int) -> Optional[dict]:
+        """New sandbox key always; new production key only if one exists.
+        The old keys stop working immediately."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE integrators SET
+                        sandbox_api_key = %s,
+                        production_api_key = IF(production_api_key IS NULL, NULL, %s),
+                        keys_rotated_at = CURRENT_TIMESTAMP(3)
+                    WHERE id = %s
+                    """,
+                    (_generate_api_key(), _generate_api_key(), integrator_id),
                 )
         return await self.get_by_id(integrator_id)
 

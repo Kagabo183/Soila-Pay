@@ -5,7 +5,11 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, condecimal
 
 ProductionStatus = Literal["NOT_SUBMITTED", "PENDING_REVIEW", "APPROVED", "REJECTED"]
+AccountMode = Literal["TEST", "PRODUCTION"]
+# What can be uploaded through the KYC endpoint...
 DocumentType = Literal["TAX_CLEARANCE", "RDB_CERTIFICATE"]
+# ...and everything that can be stored/listed (incl. the profile picture).
+StoredDocumentType = Literal["TAX_CLEARANCE", "RDB_CERTIFICATE", "PROFILE_IMAGE"]
 
 _Pct = condecimal(gt=0, lt=100, decimal_places=2)
 
@@ -34,6 +38,37 @@ class IntegratorUpdate(BaseModel):
     payout_fee_percentage: Optional[_Pct] = None
     clear_payout_fee: bool = False
     is_active: Optional[bool] = None
+    # Admin-only identity fields (the integrator sees "contact an admin").
+    email: Optional[str] = Field(default=None, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    phone_number: Optional[str] = Field(default=None, min_length=8, max_length=20)
+    username: Optional[str] = Field(default=None, min_length=3, max_length=60, pattern=r"^[A-Za-z0-9._-]+$")
+    account_mode: Optional[AccountMode] = None
+
+
+class ProfileUpdate(BaseModel):
+    """What an integrator may change themselves (portal Account page)."""
+
+    first_name: Optional[str] = Field(default=None, max_length=80)
+    last_name: Optional[str] = Field(default=None, max_length=80)
+    company: Optional[str] = Field(default=None, min_length=1, max_length=191)
+    address: Optional[str] = Field(default=None, max_length=191)
+    location: Optional[str] = Field(default=None, max_length=120)
+    city: Optional[str] = Field(default=None, max_length=80)
+    country: Optional[str] = Field(default=None, max_length=80)
+    bank_name: Optional[str] = Field(default=None, max_length=120)
+    bank_account: Optional[str] = Field(default=None, max_length=60, pattern=r"^[0-9A-Za-z -]*$")
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class RotateKeysRequest(BaseModel):
+    """Regenerating keys breaks every integration using the old ones, so it
+    requires the current password."""
+
+    current_password: str = Field(..., min_length=1)
 
 
 class IntegratorOut(BaseModel):
@@ -58,6 +93,18 @@ class IntegratorOut(BaseModel):
     payment_fee_percentage: Optional[float] = None
     payout_fee_percentage: Optional[float] = None
     is_active: bool
+    # Profile (portal Account page).
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    username: Optional[str] = None
+    address: Optional[str] = None
+    location: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account: Optional[str] = None
+    account_mode: AccountMode = "TEST"
+    keys_rotated_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -108,7 +155,7 @@ class ProductionReviewDecision(BaseModel):
 
 
 class IntegratorDocumentOut(BaseModel):
-    document_type: DocumentType
+    document_type: StoredDocumentType
     file_name: str
     content_type: str
     file_size_bytes: int

@@ -324,8 +324,34 @@ export interface Integrator {
   ipWhitelist: string | null;
   feePercentage: number;
   isActive: boolean;
+  // Profile (like LMBTech's merchant profile).
+  firstName: string | null;
+  lastName: string | null;
+  username: string | null;
+  address: string | null;
+  location: string | null;
+  city: string | null;
+  country: string | null;
+  bankName: string | null;
+  bankAccount: string | null;
+  /** TEST: only the sandbox key works. PRODUCTION: the production key too. Admin-controlled. */
+  accountMode: "TEST" | "PRODUCTION";
+  keysRotatedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Fields an integrator can change themselves on the Account page. */
+export interface IntegratorProfileUpdate {
+  firstName?: string;
+  lastName?: string;
+  company?: string;
+  address?: string;
+  location?: string;
+  city?: string;
+  country?: string;
+  bankName?: string;
+  bankAccount?: string;
 }
 
 export interface IntegratorCreateRequest {
@@ -342,6 +368,11 @@ export interface IntegratorUpdateRequest {
   name?: string;
   feePercentage?: number;
   isActive?: boolean;
+  // Admin-only identity fields + Account Mode.
+  email?: string;
+  phoneNumber?: string;
+  username?: string;
+  accountMode?: "TEST" | "PRODUCTION";
 }
 
 /** Per-integrator totals from the LMBTech ledger (successful rows only). */

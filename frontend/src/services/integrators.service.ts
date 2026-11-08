@@ -2,6 +2,7 @@ import { apiClient } from "@/lib/axios";
 import { MOCK_MODE, simulateLatency } from "@/lib/mock";
 import { generateIntegrators } from "@/data/mock/generators";
 import { mockDocumentStore } from "@/data/mock/mock-document-store";
+import { EMPTY_PROFILE, integratorFromApi } from "@/lib/integrator";
 import type {
   DocumentType,
   Integrator,
@@ -13,44 +14,8 @@ import type {
 
 let MOCK_INTEGRATORS = generateIntegrators();
 
-// snake_case <-> camelCase at the edge, matching app/schemas/integrator.py.
-function fromApi(row: {
-  id: number;
-  name: string;
-  sandbox_api_key: string;
-  production_api_key: string | null;
-  production_status: Integrator["productionStatus"];
-  production_rejection_reason: string | null;
-  email: string | null;
-  phone_number: string | null;
-  business_location: string | null;
-  tax_clearance_reference: string | null;
-  rdb_certificate_reference: string | null;
-  ip_whitelist: string | null;
-  fee_percentage: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}): Integrator {
-  return {
-    id: row.id,
-    name: row.name,
-    sandboxApiKey: row.sandbox_api_key,
-    productionApiKey: row.production_api_key,
-    productionStatus: row.production_status,
-    productionRejectionReason: row.production_rejection_reason,
-    email: row.email,
-    phoneNumber: row.phone_number,
-    businessLocation: row.business_location,
-    taxClearanceReference: row.tax_clearance_reference,
-    rdbCertificateReference: row.rdb_certificate_reference,
-    ipWhitelist: row.ip_whitelist,
-    feePercentage: row.fee_percentage,
-    isActive: row.is_active,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
+// snake_case <-> camelCase at the edge (shared with the portal service).
+const fromApi = integratorFromApi;
 
 function summaryFromApi(row: {
   integrator_id: number;
@@ -113,6 +78,7 @@ export const integratorsService = {
         ipWhitelist: null,
         feePercentage: payload.feePercentage,
         isActive: true,
+        ...EMPTY_PROFILE,
         createdAt: now,
         updatedAt: now,
       };
@@ -168,7 +134,8 @@ export const integratorsService = {
     return fromApi(data);
   },
 
-  /** PATCH /api/v1/admin/integrators/{id} - fee_percentage, is_active, or name. */
+  /** PATCH /api/v1/admin/integrators/{id} - name, is_active, and the
+   * admin-only email / phone / username / Account Mode. */
   async update(id: number, payload: IntegratorUpdateRequest): Promise<Integrator> {
     if (MOCK_MODE) {
       await simulateLatency(300, 600);
@@ -193,8 +160,25 @@ export const integratorsService = {
       ...(payload.name !== undefined ? { name: payload.name } : {}),
       ...(payload.feePercentage !== undefined ? { fee_percentage: payload.feePercentage } : {}),
       ...(payload.isActive !== undefined ? { is_active: payload.isActive } : {}),
+      ...(payload.email !== undefined ? { email: payload.email } : {}),
+      ...(payload.phoneNumber !== undefined ? { phone_number: payload.phoneNumber } : {}),
+      ...(payload.username !== undefined ? { username: payload.username } : {}),
+      ...(payload.accountMode !== undefined ? { account_mode: payload.accountMode } : {}),
     });
     return fromApi(data);
+  },
+
+  /** The integrator's profile picture as an object URL (admin auth header
+   * is attached by the axios client), or null if they haven't uploaded one. */
+  async profileImageUrl(integratorId: number): Promise<string | null> {
+    try {
+      const { data } = await apiClient.get(`/api/v1/admin/integrators/${integratorId}/documents/PROFILE_IMAGE`, {
+        responseType: "blob",
+      });
+      return URL.createObjectURL(data);
+    } catch {
+      return null;
+    }
   },
 
   /** GET /api/v1/admin/integrators/{id}/documents - metadata for KYC review, not the file bytes. */

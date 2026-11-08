@@ -1,4 +1,5 @@
 import { seededRandom, mockId } from "@/lib/mock";
+import { EMPTY_PROFILE } from "@/lib/integrator";
 import type {
   Client,
   Loan,
@@ -312,6 +313,8 @@ export function generateIntegrators(count = 4): Integrator[] {
       // "2.20 for start" - matches app/schemas/integrator.py's IntegratorCreate default.
       feePercentage: i === 0 ? 2.2 : Number((2.0 + rand() * 1.2).toFixed(2)),
       isActive: i !== count - 1,
+      ...EMPTY_PROFILE,
+      accountMode: approved ? ("PRODUCTION" as const) : ("TEST" as const),
       createdAt: daysAgo(randomInt(30, 400)),
       updatedAt: daysAgo(randomInt(0, 29)),
     };

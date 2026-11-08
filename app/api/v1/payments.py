@@ -265,6 +265,11 @@ async def _integrator_from_key(
         raise HTTPException(status_code=401, detail="Unknown Integrator-Key")
     if not integrator["is_active"]:
         raise HTTPException(status_code=403, detail="Integrator account is disabled")
+    if integrator.get("key_mode") == "production" and integrator.get("account_mode") != "PRODUCTION":
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is in Test Mode - use your sandbox key, or ask Soila Pay to switch you to Production",
+        )
     return integrator
 
 

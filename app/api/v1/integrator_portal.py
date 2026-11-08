@@ -15,7 +15,10 @@ from app.schemas.integrator import (
     IntegratorOut,
     IntegratorSessionResponse,
     IntegratorSignupRequest,
+    PasswordChange,
     ProductionKycSubmitRequest,
+    ProfileUpdate,
+    RotateKeysRequest,
 )
 from app.services.integrator_auth import (
     create_session_token,
@@ -71,11 +74,13 @@ async def signup(body: IntegratorSignupRequest, request: Request):
 @router.post("/login", response_model=IntegratorSessionResponse)
 async def login(body: IntegratorLoginRequest, request: Request):
     repo = request.app.state.integrator_repo
-    integrator = await repo.get_by_email(body.email)
+    identifier = body.email.strip()
+    # "Email or username", like LMBTech's own login.
+    integrator = await repo.get_by_email(identifier) if "@" in identifier else await repo.get_by_username(identifier)
     if integrator is None or not integrator.get("password_hash"):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid email/username or password")
     if not verify_password(body.password, integrator["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid email/username or password")
 
     token = create_session_token(integrator["id"], settings.integrator_session_secret)
     return IntegratorSessionResponse(token=token, integrator=integrator)
@@ -84,6 +89,69 @@ async def login(body: IntegratorLoginRequest, request: Request):
 @router.get("/me", response_model=IntegratorOut)
 async def me(integrator: dict = Depends(_current_integrator)):
     return integrator
+
+
+@router.patch("/me", response_model=IntegratorOut)
+async def update_my_profile(body: ProfileUpdate, request: Request, integrator: dict = Depends(_current_integrator)):
+    """Profile + bank details. Email, phone, username and Account Mode are
+    admin-only (the page says "contact an admin")."""
+    data = body.model_dump(exclude_unset=True)
+    if "company" in data:
+        data["name"] = data.pop("company")
+    repo = request.app.state.integrator_repo
+    return await repo.update_profile(integrator["id"], data, allowed=repo.PROFILE_FIELDS)
+
+
+@router.post("/me/password", status_code=204)
+async def change_my_password(body: PasswordChange, request: Request, integrator: dict = Depends(_current_integrator)):
+    if not integrator.get("password_hash") or not verify_password(body.current_password, integrator["password_hash"]):
+        raise HTTPException(status_code=400, detail="Your current password is not correct")
+    await request.app.state.integrator_repo.set_password_hash(integrator["id"], hash_password(body.new_password))
+    return Response(status_code=204)
+
+
+@router.post("/me/rotate-keys", response_model=IntegratorOut)
+async def rotate_my_keys(body: RotateKeysRequest, request: Request, integrator: dict = Depends(_current_integrator)):
+    """New sandbox key (and production key, if any). The old keys stop
+    working immediately, so the current password is required."""
+    if not integrator.get("password_hash") or not verify_password(body.current_password, integrator["password_hash"]):
+        raise HTTPException(status_code=400, detail="Your current password is not correct")
+    logger.warning("integrator_keys_rotated", extra={"integrator_id": integrator["id"]})
+    return await request.app.state.integrator_repo.rotate_keys(integrator["id"])
+
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png"}
+
+
+@router.post("/me/profile-image", status_code=204)
+async def upload_profile_image(
+    request: Request, file: UploadFile = File(...), integrator: dict = Depends(_current_integrator)
+):
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Use a JPG or PNG image")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="The image is empty")
+    if len(data) > MAX_DOCUMENT_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large - max 5MB")
+    await request.app.state.integrator_document_repo.upsert(
+        integrator["id"], "PROFILE_IMAGE", file.filename or "profile", file.content_type, data
+    )
+    return Response(status_code=204)
+
+
+@router.get("/me/profile-image")
+async def get_profile_image(request: Request, integrator: dict = Depends(_current_integrator)):
+    doc = await request.app.state.integrator_document_repo.get(integrator["id"], "PROFILE_IMAGE")
+    if doc is None:
+        raise HTTPException(status_code=404, detail="No profile image")
+    return Response(content=doc["file_data"], media_type=doc["content_type"], headers={"Cache-Control": "private, max-age=60"})
+
+
+@router.delete("/me/profile-image", status_code=204)
+async def delete_profile_image(request: Request, integrator: dict = Depends(_current_integrator)):
+    await request.app.state.integrator_document_repo.delete(integrator["id"], "PROFILE_IMAGE")
+    return Response(status_code=204)
 
 
 @router.post("/production/documents", response_model=IntegratorDocumentOut, status_code=201)
