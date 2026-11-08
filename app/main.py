@@ -30,7 +30,10 @@ DEFAULT_INSECURE_SECRET = "insecure-dev-secret-change-me"
 
 async def _payment_reconciliation_loop(app: FastAPI, interval_seconds: float, max_age_hours: int) -> None:
     """Polls LMBTech for PENDING collections and payouts - its callback can't
-    reach localhost, and callbacks can be lost in production too."""
+    reach localhost, and callbacks can be lost in production too. Also
+    re-checks rows that FAILED in the last 2 hours: a local error (timeout,
+    unreadable reply) can mark a row FAILED while LMBTech actually took the
+    money, and that must be corrected, not left to drift."""
     while True:
         try:
             refs = await app.state.payment_repo.list_pending_references(max_age_hours)
@@ -39,6 +42,11 @@ async def _payment_reconciliation_loop(app: FastAPI, interval_seconds: float, ma
                     await app.state.payment_service.sync(ref)
                 except Exception:
                     logger.exception("payment_reconciliation_failed", extra={"reference_id": ref})
+            for ref in await app.state.payment_repo.list_recent_failed_references(hours=2):
+                try:
+                    await app.state.payment_service.reconcile(ref)
+                except Exception:
+                    logger.exception("payment_failed_recheck_error", extra={"reference_id": ref})
         except asyncio.CancelledError:
             raise
         except Exception:

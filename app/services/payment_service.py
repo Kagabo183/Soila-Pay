@@ -300,12 +300,98 @@ class PaymentService:
             status=result.status,
             status_message=result.message,
             gateway_transaction_id=result.transaction_id,
+            gateway_amount=result.amount,
         )
         row = await self._repo.get_by_reference(reference_id)
         if changed:
             logger.info("payment_status_changed", extra={"reference_id": reference_id, "status": row["status"]})
             await self._notify(row)
         return row
+
+    # -- Reconciliation with LMBTech -----------------------------------------
+
+    async def reconcile(self, reference_id: str) -> Optional[dict]:
+        """Compare one row with LMBTech and correct it - including a finished
+        row we got wrong (FAILED here, paid at LMBTech). Returns a change
+        record, or None if it already agreed / LMBTech doesn't know it."""
+        try:
+            result = await self._gateway.get_status(reference_id)
+        except LMBTechError as exc:
+            logger.warning("reconcile_lookup_failed", extra={"reference_id": reference_id, "error": exc.message})
+            return {"reference_id": reference_id, "error": exc.message}
+        if result is None or result.status == "PENDING":
+            return None  # unknown at LMBTech, or still in progress - nothing to correct
+        previous = await self._repo.reconcile_state(
+            reference_id,
+            status=result.status,
+            status_message=result.message,
+            gateway_transaction_id=result.transaction_id,
+            gateway_amount=result.amount,
+        )
+        if previous is None:
+            return None
+        row = await self._repo.get_by_reference(reference_id)
+        logger.warning(
+            "payment_reconciled",
+            extra={"reference_id": reference_id, "from": previous, "to": row["status"]},
+        )
+        await self._notify(row)
+        return {
+            "reference_id": reference_id,
+            "name": row["customer_name"],
+            "amount_rwf": float(row["amount_rwf"]),
+            "from_status": previous,
+            "to_status": row["status"],
+        }
+
+    async def reconcile_all(self, days: int) -> dict:
+        refs = await self._repo.list_references_since(days)
+        changes, errors = [], []
+        for ref in refs:
+            outcome = await self.reconcile(ref)
+            if outcome and "error" in outcome:
+                errors.append(outcome)
+            elif outcome:
+                changes.append(outcome)
+        return {"checked": len(refs), "corrected": changes, "errors": errors}
+
+    async def import_from_gateway(self, reference_id: str, amount_rwf: int, channel: str, description: str) -> dict:
+        """Add a transaction that exists at LMBTech but not here (e.g. made
+        outside Soila Pay). LMBTech must know it; its status/name come from
+        LMBTech. `amount_rwf` is the NET amount shown on LMBTech's dashboard -
+        their status API reports a different, fee-inclusive figure."""
+        if await self._repo.get_by_reference(reference_id):
+            raise DuplicateReferenceError(f"Reference {reference_id} is already in Soila Pay")
+        result = await self._gateway.get_status(reference_id)
+        if result is None:
+            raise LMBTechError(f"LMBTech has no transaction with reference {reference_id}")
+        pricing = await self.pricing()
+        amount = Decimal(amount_rwf)
+        money = compute_money(amount, None, pricing.gateway_cost_percentage)
+        await self._repo.create(
+            reference_id=reference_id,
+            direction=COLLECTION,
+            integrator_id=None,
+            method="MOMO" if channel == "MTN" else "CARD",
+            channel=channel,
+            amount_rwf=amount,
+            money=money,
+            customer_name=result.name or "Imported from LMBTech",
+            customer_email="",
+            customer_phone=None,
+            description=description or "Imported from LMBTech",
+            return_url=None,
+            is_test=self._settings.lmbtech_test_mode,
+            imported=True,
+        )
+        await self._repo.reconcile_state(
+            reference_id,
+            status=result.status,
+            status_message=result.message,
+            gateway_transaction_id=result.transaction_id,
+            gateway_amount=result.amount,
+        )
+        return await self._repo.get_by_reference(reference_id)
 
     async def _notify(self, row: Optional[dict]) -> None:
         if not row or not row.get("integrator_id") or row["status"] not in ("SUCCESS", "FAILED", "CANCELLED"):

@@ -60,7 +60,7 @@ function csvCell(v: unknown) {
 /** One ledger for money in (collections) and money out (payouts), shared by
  * the admin console and the integrator portal. Admins also see LMBTech's
  * cost, the margin and which integrator each row belongs to. */
-export function Ledger({ scope }: { scope: PaymentScope }) {
+export function Ledger({ scope, refreshKey = 0 }: { scope: PaymentScope; refreshKey?: number }) {
   const admin = scope.kind === "admin";
   const token = scope.kind === "portal" ? scope.token : null;
   const stableScope = React.useMemo<PaymentScope>(() => (token ? { kind: "portal", token } : { kind: "admin" }), [token]);
@@ -103,7 +103,7 @@ export function Ledger({ scope }: { scope: PaymentScope }) {
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   function filter<T>(set: (v?: T) => void) {
     return (v?: T) => {
@@ -121,11 +121,11 @@ export function Ledger({ scope }: { scope: PaymentScope }) {
         all.push(...res.items);
         if (all.length >= res.total) break;
       }
-      const header = ["date", "type", "status", "name", "phone", "method", "amount_rwf", "fee_rwf", ...(admin ? ["lmbtech_cost_rwf", "margin_rwf", "integrator"] : []), "reference", "gateway_transaction_id", "note"];
+      const header = ["date", "type", "status", "name", "phone", "method", "amount_rwf", "fee_rwf", ...(admin ? ["lmbtech_cost_rwf", "margin_rwf", "integrator", "lmbtech_reported_amount_rwf", "corrected", "imported"] : []), "reference", "gateway_transaction_id", "note"];
       const lines = all.map((r) =>
         [
           r.createdAt, r.direction, r.status, r.customerName, r.customerPhone, channelLabel(r.channel), r.amountRwf, r.feeAmountRwf,
-          ...(admin ? [r.gatewayCostAmountRwf, r.marginAmountRwf, r.integratorName ?? "Console"] : []),
+          ...(admin ? [r.gatewayCostAmountRwf, r.marginAmountRwf, r.integratorName ?? "Console", r.gatewayAmountRwf, r.reconciled, r.imported] : []),
           r.referenceId, r.gatewayTransactionId, r.statusMessage,
         ].map(csvCell).join(",")
       );
@@ -183,7 +183,7 @@ export function Ledger({ scope }: { scope: PaymentScope }) {
             <thead>
               <tr className="border-b-2 border-[var(--bk-ink)] bg-secondary text-left">
                 {["When", "Type", "Name", "Method", "Amount", "Fee", ...(admin ? ["LMBTech", "Margin", "Integrator"] : []), "Status"].map((h, i) => (
-                  <th key={h} className={cn("bk-display whitespace-nowrap px-3 py-2.5 text-[11px] font-bold uppercase", i >= 4 && i <= (admin ? 7 : 5) && "text-right")}>
+                  <th key={h} className={cn("bk-display whitespace-nowrap px-2 py-2.5 text-[11px] font-bold uppercase", i >= 4 && i <= (admin ? 7 : 5) && "text-right")}>
                     {h}
                   </th>
                 ))}
@@ -205,36 +205,51 @@ export function Ledger({ scope }: { scope: PaymentScope }) {
               ) : (
                 rows.map((r) => (
                   <tr key={r.referenceId} className="border-b border-[var(--bk-ink)]/20 last:border-0 hover:bg-[var(--bk-yellow)]/20">
-                    <td className="whitespace-nowrap px-3 py-2.5 text-xs">{formatDateTime(r.createdAt)}</td>
-                    <td className="px-3 py-2.5">
+                    <td className="whitespace-nowrap px-2 py-2.5 text-xs">{formatDateTime(r.createdAt)}</td>
+                    <td className="px-2 py-2.5">
                       <span className={cn("bk-tag", r.direction === "DISBURSEMENT" ? "bk-fill-blue" : "bk-fill-green")}>
                         {r.direction === "DISBURSEMENT" ? "↑ Out" : "↓ In"}
                       </span>
                     </td>
-                    <td className="max-w-[14rem] px-3 py-2.5">
+                    <td className="max-w-[14rem] px-2 py-2.5">
                       <p className="truncate font-semibold">{r.customerName}</p>
                       <p className="bk-muted truncate font-mono text-[10px]" title={r.referenceId}>
                         {r.referenceId}
                       </p>
+                      {(r.reconciled || r.imported) && (
+                        <span
+                          className="bk-tag bk-fill-yellow mt-0.5"
+                          title={r.reconciled ? "Corrected after checking LMBTech" : "Made outside Soila Pay, added from LMBTech"}
+                        >
+                          {r.reconciled ? "Corrected" : "Imported"}
+                        </span>
+                      )}
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td className="px-2 py-2.5">
                       <span className="flex items-center gap-2 whitespace-nowrap text-xs">
                         <ChannelLogo channel={r.channel} className="h-6 w-9 text-[8px]" />
                         {channelLabel(r.channel)}
                       </span>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-right font-bold">{rwf(r.amountRwf)}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-right">{r.feeAmountRwf === null ? "—" : rwf(r.feeAmountRwf)}</td>
+                    <td className="whitespace-nowrap px-2 py-2.5 text-right">
+                      <span className="font-bold">{rwf(r.amountRwf)}</span>
+                      {admin && r.gatewayAmountRwf !== null && r.gatewayAmountRwf !== r.amountRwf && (
+                        <span className="bk-muted block text-[10px]" title="What LMBTech's status reports - includes LMBTech's own fee">
+                          LMBTech: {rwf(r.gatewayAmountRwf)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2.5 text-right">{r.feeAmountRwf === null ? "—" : rwf(r.feeAmountRwf)}</td>
                     {admin && (
                       <>
-                        <td className="whitespace-nowrap px-3 py-2.5 text-right">{r.gatewayCostAmountRwf === null ? "—" : `−${rwf(r.gatewayCostAmountRwf)}`}</td>
-                        <td className={cn("whitespace-nowrap px-3 py-2.5 text-right font-semibold", (r.marginAmountRwf ?? 0) < 0 && "text-destructive")}>
+                        <td className="whitespace-nowrap px-2 py-2.5 text-right">{r.gatewayCostAmountRwf === null ? "—" : `−${rwf(r.gatewayCostAmountRwf)}`}</td>
+                        <td className={cn("whitespace-nowrap px-2 py-2.5 text-right font-semibold", (r.marginAmountRwf ?? 0) < 0 && "text-destructive")}>
                           {r.marginAmountRwf === null ? "—" : rwf(r.marginAmountRwf)}
                         </td>
-                        <td className="max-w-[9rem] truncate px-3 py-2.5 text-xs">{r.integratorName ?? "Console"}</td>
+                        <td className="max-w-[9rem] truncate px-2 py-2.5 text-xs">{r.integratorName ?? "Console"}</td>
                       </>
                     )}
-                    <td className="px-3 py-2.5">
+                    <td className="px-2 py-2.5">
                       <span title={[r.statusMessage, r.isTest ? "Test transaction" : null].filter(Boolean).join(" · ") || undefined}>
                         <StatusStamp status={r.status} />
                       </span>

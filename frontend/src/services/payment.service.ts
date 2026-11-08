@@ -21,6 +21,12 @@ export interface Payment {
   gatewayCostPercentage: number | null;
   gatewayCostAmountRwf: number | null;
   marginAmountRwf: number | null;
+  /** Admin only: the amount LMBTech reports (includes LMBTech's own fee). */
+  gatewayAmountRwf: number | null;
+  /** A check against LMBTech corrected this row. */
+  reconciled: boolean;
+  /** Added from LMBTech because it was made outside Soila Pay. */
+  imported: boolean;
   /** Collections: the payer. Disbursements: the recipient. */
   customerName: string;
   customerEmail: string;
@@ -89,6 +95,12 @@ export interface Overview {
     successRate: number | null;
   };
   recent: Payment[];
+}
+
+export interface ReconcileReport {
+  checked: number;
+  corrected: { referenceId: string; name: string; amountRwf: number; fromStatus: string; toStatus: string }[];
+  errors: number;
 }
 
 export interface IntegratorPaymentFee {
@@ -161,6 +173,9 @@ function fromApi(row: any): Payment {
     gatewayCostPercentage: row.gateway_cost_percentage ?? null,
     gatewayCostAmountRwf: row.gateway_cost_amount_rwf ?? null,
     marginAmountRwf: row.margin_amount_rwf ?? null,
+    gatewayAmountRwf: row.gateway_amount_rwf ?? null,
+    reconciled: !!row.reconciled,
+    imported: !!row.imported,
     customerName: row.customer_name,
     customerEmail: row.customer_email,
     customerPhone: row.customer_phone,
@@ -322,6 +337,35 @@ export const paymentService = {
       ...(fees.collection === null ? { clear_payment_fee: true } : { payment_fee_percentage: fees.collection.toFixed(2) }),
       ...(fees.payout === null ? { clear_payout_fee: true } : { payout_fee_percentage: fees.payout.toFixed(2) }),
     });
+  },
+
+  /** Admin: compare every transaction from the last `days` days with LMBTech
+   * and correct any that disagree. */
+  async reconcile(days = 30): Promise<ReconcileReport> {
+    const { data } = await apiClient.post("/api/v1/admin/payments/reconcile", null, { params: { days }, timeout: 180000 });
+    return {
+      checked: data.checked,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      corrected: data.corrected.map((c: any) => ({
+        referenceId: c.reference_id,
+        name: c.name,
+        amountRwf: c.amount_rwf,
+        fromStatus: c.from_status,
+        toStatus: c.to_status,
+      })),
+      errors: data.errors.length,
+    };
+  },
+
+  /** Admin: add a transaction that exists only at LMBTech. */
+  async importFromLmbtech(p: { referenceId: string; amountRwf: number; channel: string; description?: string }): Promise<Payment> {
+    const { data } = await apiClient.post("/api/v1/admin/payments/import", {
+      reference_id: p.referenceId.trim(),
+      amount_rwf: p.amountRwf,
+      channel: p.channel,
+      description: p.description || "Imported from LMBTech",
+    });
+    return fromApi(data);
   },
 
   /** No login needed - the receipt page a card payer returns to. */

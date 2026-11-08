@@ -108,6 +108,12 @@ class PaymentOut(BaseModel):
     gateway_cost_percentage: Optional[float] = None
     gateway_cost_amount_rwf: Optional[float] = None
     margin_amount_rwf: Optional[float] = None
+    # Admin only: the amount LMBTech reports for this transaction (observed to
+    # include LMBTech's own fee on top), whether a reconciliation corrected
+    # this row, and whether it was imported from LMBTech.
+    gateway_amount_rwf: Optional[float] = None
+    reconciled: bool = False
+    imported: bool = False
     # Collections: the payer. Disbursements: the recipient.
     customer_name: str
     customer_email: str
@@ -195,6 +201,31 @@ class IntegratorPaymentFee(BaseModel):
 
 class PaymentPricingOut(PaymentPricing):
     integrators: list[IntegratorPaymentFee]
+
+
+class ReconcileChange(BaseModel):
+    reference_id: str
+    name: str
+    amount_rwf: float
+    from_status: str
+    to_status: str
+
+
+class ReconcileReport(BaseModel):
+    checked: int
+    corrected: list[ReconcileChange]
+    errors: list[dict]
+
+
+class ImportRequest(BaseModel):
+    """Add a transaction that exists only at LMBTech (made outside Soila Pay)."""
+
+    reference_id: str = Field(..., min_length=3, max_length=64)
+    # The NET amount from LMBTech's dashboard (their status API reports a
+    # different, fee-inclusive number).
+    amount_rwf: int = Field(..., ge=1, le=5_000_000)
+    channel: Literal["VISA", "MASTERCARD", "OTHER_CARD", "MTN"] = "OTHER_CARD"
+    description: str = Field(default="Imported from LMBTech", max_length=120)
 
 
 class OverviewDay(BaseModel):

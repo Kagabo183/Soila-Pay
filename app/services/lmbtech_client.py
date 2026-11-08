@@ -72,6 +72,11 @@ class GatewayResult:
     message: Optional[str] = None
     transaction_id: Optional[str] = None
     redirect_url: Optional[str] = None
+    # Status API only: the amount LMBTech reports (observed to include its own
+    # fee on top of what we asked for, e.g. 105 for 100).
+    amount: Optional[Decimal] = None
+    # Status API only: the payer/recipient name LMBTech has on file.
+    name: Optional[str] = None
 
 
 class LMBTechClient:
@@ -257,8 +262,14 @@ class LMBTechClient:
 
         # Flat in practice; tolerate a data envelope in case they add one.
         envelope = data.get("data") if isinstance(data.get("data"), dict) else data
+        try:
+            amount = Decimal(str(envelope.get("amount"))) if envelope.get("amount") not in (None, "") else None
+        except (ArithmeticError, ValueError):
+            amount = None
         return GatewayResult(
             status=normalize_status(envelope.get("status")),
             message=envelope.get("message") or data.get("message"),
             transaction_id=envelope.get("transaction_id") or None,
+            amount=amount,
+            name=envelope.get("name") or None,
         )

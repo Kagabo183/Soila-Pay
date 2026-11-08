@@ -157,6 +157,8 @@ async def test_status_flat_response_and_not_found():
     client = _client()
     ok = await client.get_status("SP-OK")
     assert ok.status == "SUCCESS" and ok.transaction_id == "TEST-1"
+    # LMBTech's reported amount (fee-inclusive) and name are kept for reconciliation.
+    assert ok.amount == Decimal("105.00") and ok.name == "Aline"
     assert await client.get_status("SP-NONE") is None
 
 

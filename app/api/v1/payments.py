@@ -23,6 +23,7 @@ from app.api.v1.deps import require_admin
 from app.api.v1.integrator_portal import _current_integrator
 from app.schemas.payment import (
     DisbursementCreate,
+    ImportRequest,
     IntegratorPaymentFee,
     Overview,
     OverviewChannel,
@@ -35,7 +36,9 @@ from app.schemas.payment import (
     PaymentPricingOut,
     PaymentSummary,
     PublicPaymentOut,
+    ReconcileReport,
 )
+from app.services.lmbtech_client import LMBTechError
 from app.services.payment_service import (
     DISBURSEMENT,
     DuplicateReferenceError,
@@ -81,6 +84,9 @@ def payment_out(row: dict, *, admin: bool = False) -> PaymentOut:
         gateway_cost_percentage=_num(row.get("gateway_cost_percentage")) if admin else None,
         gateway_cost_amount_rwf=_num(row.get("gateway_cost_amount_rwf")) if admin else None,
         margin_amount_rwf=_num(row.get("margin_amount_rwf")) if admin else None,
+        gateway_amount_rwf=_num(row.get("gateway_amount_rwf")) if admin else None,
+        reconciled=admin and bool(row.get("corrected_from")),
+        imported=bool(row.get("imported")),
         customer_name=row["customer_name"],
         customer_email=row["customer_email"],
         customer_phone=row.get("customer_phone"),
@@ -452,6 +458,28 @@ async def admin_set_pricing(body: PaymentPricing, request: Request):
         payout_default_fee_percentage=Decimal(str(body.payout_default_fee_percentage)),
     )
     return await _pricing_out(request)
+
+
+@admin_router.post("/reconcile", response_model=ReconcileReport)
+async def admin_reconcile(request: Request, days: int = Query(default=30, ge=1, le=365)):
+    """Check every transaction from the last `days` days against LMBTech and
+    correct any that disagree (LMBTech is the source of truth)."""
+    if not _service(request).gateway_configured:
+        raise HTTPException(status_code=503, detail="LMBTech is not configured")
+    return await _service(request).reconcile_all(days)
+
+
+@admin_router.post("/import", response_model=PaymentOut, status_code=201)
+async def admin_import(body: ImportRequest, request: Request):
+    """Add a transaction that exists only at LMBTech (made outside Soila Pay),
+    so both sides match. LMBTech must know the reference."""
+    try:
+        row = await _service(request).import_from_gateway(body.reference_id, body.amount_rwf, body.channel, body.description)
+    except DuplicateReferenceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LMBTechError as exc:
+        raise HTTPException(status_code=404 if "no transaction" in exc.message else 502, detail=exc.message) from exc
+    return payment_out(row, admin=True)
 
 
 @admin_router.get("/{reference_id}", response_model=PaymentOut)

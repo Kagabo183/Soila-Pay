@@ -63,6 +63,7 @@ class PaymentRepo:
         description: str,
         return_url: Optional[str],
         is_test: bool,
+        imported: bool = False,
     ) -> dict:
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -72,14 +73,14 @@ class PaymentRepo:
                         (reference_id, direction, integrator_id, method, channel, amount_rwf,
                          fee_percentage, fee_amount_rwf, gateway_cost_percentage,
                          gateway_cost_amount_rwf, margin_amount_rwf, customer_name,
-                         customer_email, customer_phone, description, return_url, is_test)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         customer_email, customer_phone, description, return_url, is_test, imported)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         reference_id, direction, integrator_id, method, channel, amount_rwf,
                         money.fee_percentage, money.fee_amount_rwf, money.gateway_cost_percentage,
                         money.gateway_cost_amount_rwf, money.margin_amount_rwf, customer_name,
-                        customer_email, customer_phone, description, return_url, int(is_test),
+                        customer_email, customer_phone, description, return_url, int(is_test), int(imported),
                     ),
                 )
                 await conn.commit()
@@ -106,10 +107,12 @@ class PaymentRepo:
         status_message: Optional[str] = None,
         gateway_transaction_id: Optional[str] = None,
         redirect_url: Optional[str] = None,
+        gateway_amount: Optional[Decimal] = None,
     ) -> bool:
         """Applies the gateway's view. Never moves a row OUT of a terminal
-        status (a late/duplicate callback can't flip SUCCESS back to PENDING).
-        Returns True if the status actually changed."""
+        status (a late/duplicate callback can't flip SUCCESS back to PENDING)
+        - only reconcile_state() may correct a finished row. Returns True if
+        the status actually changed."""
         message = (status_message or None) and status_message[:255]
         async with self._pool.acquire() as conn:
             async with conn.cursor() as cur:
@@ -120,28 +123,106 @@ class PaymentRepo:
                         status_message = COALESCE(%s, status_message),
                         gateway_transaction_id = COALESCE(NULLIF(%s, ''), gateway_transaction_id),
                         redirect_url = COALESCE(%s, redirect_url),
+                        gateway_amount_rwf = COALESCE(%s, gateway_amount_rwf),
                         completed_at = IF(%s IN ('SUCCESS','FAILED','CANCELLED'), CURRENT_TIMESTAMP(3), completed_at)
                     WHERE reference_id = %s
                       AND status NOT IN ('SUCCESS','FAILED','CANCELLED')
                       AND status <> %s
                     """,
-                    (status, message, gateway_transaction_id, redirect_url, status, reference_id, status),
+                    (status, message, gateway_transaction_id, redirect_url, gateway_amount, status, reference_id, status),
                 )
                 changed = cur.rowcount > 0
-                if not changed and (gateway_transaction_id or redirect_url or message):
-                    # Same status - still record new details (e.g. redirect_url).
+                if not changed and (gateway_transaction_id or redirect_url or message or gateway_amount is not None):
+                    # Same status - still record new details (e.g. redirect_url, LMBTech's amount).
                     await cur.execute(
                         """
                         UPDATE payments SET
-                            status_message = COALESCE(%s, status_message),
+                            status_message = IF(status IN ('SUCCESS','FAILED','CANCELLED'), status_message, COALESCE(%s, status_message)),
                             gateway_transaction_id = COALESCE(NULLIF(%s, ''), gateway_transaction_id),
-                            redirect_url = COALESCE(%s, redirect_url)
-                        WHERE reference_id = %s AND status NOT IN ('SUCCESS','FAILED','CANCELLED')
+                            redirect_url = COALESCE(%s, redirect_url),
+                            gateway_amount_rwf = COALESCE(%s, gateway_amount_rwf)
+                        WHERE reference_id = %s
                         """,
-                        (message, gateway_transaction_id, redirect_url, reference_id),
+                        (message, gateway_transaction_id, redirect_url, gateway_amount, reference_id),
                     )
                 await conn.commit()
         return changed
+
+    async def reconcile_state(
+        self,
+        reference_id: str,
+        *,
+        status: str,
+        status_message: Optional[str],
+        gateway_transaction_id: Optional[str],
+        gateway_amount: Optional[Decimal],
+    ) -> Optional[str]:
+        """Make our row agree with LMBTech, INCLUDING correcting a finished row
+        (e.g. we recorded FAILED but LMBTech says the money arrived). Only
+        ever called with the gateway's own authenticated status. Returns the
+        previous status if it changed, else None."""
+        message = (status_message or None) and status_message[:255]
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT status FROM payments WHERE reference_id = %s FOR UPDATE", (reference_id,))
+                row = await cur.fetchone()
+                if row is None:
+                    await conn.commit()
+                    return None
+                previous = row[0]
+                if previous != status:
+                    await cur.execute(
+                        """
+                        UPDATE payments SET
+                            status = %s,
+                            status_message = %s,
+                            gateway_transaction_id = COALESCE(NULLIF(%s, ''), gateway_transaction_id),
+                            gateway_amount_rwf = COALESCE(%s, gateway_amount_rwf),
+                            completed_at = IF(%s IN ('SUCCESS','FAILED','CANCELLED'), COALESCE(completed_at, CURRENT_TIMESTAMP(3)), NULL),
+                            reconciled_at = CURRENT_TIMESTAMP(3),
+                            corrected_from = IF(imported = 1 AND %s = 'PENDING', corrected_from, %s)
+                        WHERE reference_id = %s
+                        """,
+                        (status, message or f"Corrected from {previous} after checking LMBTech", gateway_transaction_id,
+                         gateway_amount, status, previous, previous, reference_id),
+                    )
+                else:
+                    await cur.execute(
+                        """
+                        UPDATE payments SET
+                            gateway_transaction_id = COALESCE(NULLIF(%s, ''), gateway_transaction_id),
+                            gateway_amount_rwf = COALESCE(%s, gateway_amount_rwf),
+                            reconciled_at = IF(status IN ('SUCCESS','FAILED','CANCELLED'), CURRENT_TIMESTAMP(3), reconciled_at)
+                        WHERE reference_id = %s
+                        """,
+                        (gateway_transaction_id, gateway_amount, reference_id),
+                    )
+                await conn.commit()
+        return previous if previous != status else None
+
+    async def list_references_since(self, days: int, limit: int = 1000) -> list[str]:
+        since = datetime.now() - timedelta(days=days)
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT reference_id FROM payments WHERE created_at >= %s ORDER BY created_at DESC LIMIT %s",
+                    (since, limit),
+                )
+                return [row[0] for row in await cur.fetchall()]
+
+    async def list_recent_failed_references(self, hours: int) -> list[str]:
+        """FAILED rows from the last few hours - a local error (timeout,
+        unreadable reply) can mark a row FAILED while LMBTech actually took
+        the money, so these get re-checked by the background loop."""
+        since = datetime.now() - timedelta(hours=hours)
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT reference_id FROM payments WHERE status = 'FAILED' AND created_at >= %s "
+                    "AND reconciled_at IS NULL ORDER BY created_at DESC LIMIT 100",
+                    (since,),
+                )
+                return [row[0] for row in await cur.fetchall()]
 
     async def list_paginated(
         self,
