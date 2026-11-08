@@ -37,7 +37,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <ThemeScript />
       </head>
-      <body className="h-full min-h-full">
+      {/* suppressHydrationWarning: browser extensions (e.g. Grammarly) add
+          attributes to <body> before React loads. Only affects this element's
+          own attributes - mismatches inside the app are still reported. */}
+      <body className="h-full min-h-full" suppressHydrationWarning>
         <ConfirmDialogProvider>
           {children}
           <NotificationViewport />
