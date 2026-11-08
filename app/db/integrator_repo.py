@@ -97,7 +97,7 @@ class IntegratorRepo:
         fee_percentage: Decimal = DEFAULT_INTEGRATOR_FEE_PERCENTAGE,
     ) -> dict:
         """Integrator self-registration: just enough to start testing in
-        sandbox immediately (mirrors how DDIN itself onboarded us). Production
+        sandbox immediately. Production
         access requires a separate KYC submission - see submit_production_kyc."""
         return await self.create(
             name, fee_percentage, email=email, password_hash=password_hash
@@ -110,12 +110,24 @@ class IntegratorRepo:
         name: Optional[str] = None,
         fee_percentage: Optional[Decimal] = None,
         is_active: Optional[bool] = None,
+        payment_fee_percentage: Optional[Decimal] = None,
+        clear_payment_fee: bool = False,
+        payout_fee_percentage: Optional[Decimal] = None,
+        clear_payout_fee: bool = False,
     ) -> Optional[dict]:
         fields: dict[str, Any] = {}
         if name is not None:
             fields["name"] = name
         if fee_percentage is not None:
             fields["fee_percentage"] = str(fee_percentage)
+        if clear_payment_fee:
+            fields["payment_fee_percentage"] = None
+        elif payment_fee_percentage is not None:
+            fields["payment_fee_percentage"] = str(payment_fee_percentage)
+        if clear_payout_fee:
+            fields["payout_fee_percentage"] = None
+        elif payout_fee_percentage is not None:
+            fields["payout_fee_percentage"] = str(payout_fee_percentage)
         if is_active is not None:
             fields["is_active"] = int(is_active)
 
@@ -197,7 +209,7 @@ class IntegratorRepo:
                 )
         return await self.get_by_id(integrator_id)
 
-    # -- Platform-wide settings (e.g. DDIN's cost %) --------------------------
+    # -- Platform-wide settings (LMBTech cost %, default fees) -----------------
 
     async def get_setting(self, key: str) -> Optional[str]:
         async with self._pool.acquire() as conn:
@@ -224,11 +236,10 @@ class IntegratorRepo:
     # -- Revenue reporting -----------------------------------------------------
 
     async def revenue_summary(self) -> list[dict]:
-        """Per-integrator totals: what we collected, what we charged, what DDIN
-        cost us, and the resulting margin - the "where does my 0.3% come from"
-        view. Uses the fee/cost/margin snapshotted on each SUCCESS row, not the
-        integrator's *current* fee_percentage, so past rate changes don't
-        retroactively distort historical totals."""
+        """Per-integrator totals from the LMBTech ledger (payments table):
+        collected, disbursed, fees charged, LMBTech cost and margin - using
+        the fee/cost snapshotted on each SUCCESS row, so past rate changes
+        never rewrite history."""
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
@@ -236,16 +247,16 @@ class IntegratorRepo:
                     SELECT
                         i.id AS integrator_id,
                         i.name AS integrator_name,
-                        i.fee_percentage AS current_fee_percentage,
-                        COUNT(t.id) AS successful_transactions,
-                        COALESCE(SUM(t.amount_rwf), 0) AS total_collected_rwf,
-                        COALESCE(SUM(t.fee_amount_rwf), 0) AS total_fee_charged_rwf,
-                        COALESCE(SUM(t.ddin_cost_amount_rwf), 0) AS total_ddin_cost_rwf,
-                        COALESCE(SUM(t.margin_amount_rwf), 0) AS total_margin_rwf
+                        COUNT(p.id) AS successful_transactions,
+                        COALESCE(SUM(CASE WHEN p.direction='COLLECTION' THEN p.amount_rwf END), 0) AS total_collected_rwf,
+                        COALESCE(SUM(CASE WHEN p.direction='DISBURSEMENT' THEN p.amount_rwf END), 0) AS total_disbursed_rwf,
+                        COALESCE(SUM(p.fee_amount_rwf), 0) AS total_fee_charged_rwf,
+                        COALESCE(SUM(p.gateway_cost_amount_rwf), 0) AS total_gateway_cost_rwf,
+                        COALESCE(SUM(p.margin_amount_rwf), 0) AS total_margin_rwf
                     FROM integrators i
-                    LEFT JOIN transaction_logs t
-                        ON t.integrator_id = i.id AND t.status = 'SUCCESS'
-                    GROUP BY i.id, i.name, i.fee_percentage
+                    LEFT JOIN payments p
+                        ON p.integrator_id = i.id AND p.status = 'SUCCESS'
+                    GROUP BY i.id, i.name
                     ORDER BY i.id
                     """
                 )

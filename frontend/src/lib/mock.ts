@@ -1,9 +1,10 @@
 // Central mock-mode switch. Every services/*.ts module checks this before
-// deciding whether to hit `apiClient` or return generated mock data. Flip
-// NEXT_PUBLIC_USE_MOCKS=false (and configure the real base URL in
-// /settings/api or NEXT_PUBLIC_API_BASE_URL) to switch a service to
-// production without touching any component that calls it.
-export const MOCK_MODE = process.env.NEXT_PUBLIC_USE_MOCKS !== "false";
+// deciding whether to hit `apiClient` or return generated mock data.
+// REAL API BY DEFAULT: mocks run only when NEXT_PUBLIC_USE_MOCKS=true is set
+// explicitly (e.g. for a design demo with no backend). A build that forgets
+// the variable must never silently show fake data or fake payments.
+// Payments (services/payment.service.ts) never use mocks at all.
+export const MOCK_MODE = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 
 export function simulateLatency(minMs = 250, maxMs = 700): Promise<void> {
   const ms = minMs + Math.random() * (maxMs - minMs);

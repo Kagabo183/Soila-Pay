@@ -7,12 +7,14 @@ from pydantic import BaseModel, Field, condecimal
 ProductionStatus = Literal["NOT_SUBMITTED", "PENDING_REVIEW", "APPROVED", "REJECTED"]
 DocumentType = Literal["TAX_CLEARANCE", "RDB_CERTIFICATE"]
 
+_Pct = condecimal(gt=0, lt=100, decimal_places=2)
+
 
 class IntegratorCreate(BaseModel):
     name: str = Field(..., min_length=1)
-    # "2.20 for start" per the founder's brief (DDIN charges Soila Pay 2%,
-    # target margin 0.2%) - a sane default, not a hardcode: it's still a
-    # per-row DB value, editable later via IntegratorUpdate.
+    # Legacy column kept for the Fineract-based flow planned later; checkout
+    # payments and payouts use payment_fee_percentage / payout_fee_percentage
+    # (or the platform defaults on the Pricing page).
     fee_percentage: condecimal(gt=0, decimal_places=2) = Decimal("2.20")
     # Optional: set both together to also hand the integrator working
     # self-service portal login credentials (POST /api/v1/integrator-portal/login)
@@ -25,6 +27,12 @@ class IntegratorCreate(BaseModel):
 class IntegratorUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1)
     fee_percentage: Optional[condecimal(gt=0, decimal_places=2)] = None
+    # Collections (payments) and payouts fee overrides. Must be >= LMBTech's
+    # cost - enforced in the route. clear_* = fall back to the platform default.
+    payment_fee_percentage: Optional[_Pct] = None
+    clear_payment_fee: bool = False
+    payout_fee_percentage: Optional[_Pct] = None
+    clear_payout_fee: bool = False
     is_active: Optional[bool] = None
 
 
@@ -39,42 +47,32 @@ class IntegratorOut(BaseModel):
     email: Optional[str] = None
     business_location: Optional[str] = None
     # Filenames of the uploaded documents (for quick display without a join) -
-    # the actual file bytes live in integrator_documents, fetched via
-    # GET /api/v1/admin/integrators/{id}/documents/{document_type} or
-    # GET /api/v1/integrator-portal/production/documents.
+    # the actual file bytes live in integrator_documents.
     tax_clearance_reference: Optional[str] = None
     rdb_certificate_reference: Optional[str] = None
     ip_whitelist: Optional[str] = None
-    # float, not Decimal: this is an output-only field, and Pydantic v2
-    # serializes Decimal to a JSON *string* (to preserve precision) rather
-    # than a number - which silently breaks any frontend code expecting a
-    # number (e.g. `.toFixed()`). The database column and every internal
-    # calculation still use Decimal (see IntegratorCreate/IntegratorUpdate,
-    # and collection_orchestrator.py) - this only affects the API response.
+    # float, not Decimal: Pydantic v2 serializes Decimal to a JSON *string*,
+    # which breaks frontend arithmetic. DB + internal math stay Decimal.
     fee_percentage: float
+    # None = the platform default (Pricing page) applies.
+    payment_fee_percentage: Optional[float] = None
+    payout_fee_percentage: Optional[float] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
 
 class IntegratorSummary(BaseModel):
+    """Per-integrator totals from the LMBTech ledger (SUCCESS rows only)."""
+
     integrator_id: int
     integrator_name: str
-    # float, not Decimal - see the comment on IntegratorOut.fee_percentage.
-    current_fee_percentage: float
     successful_transactions: int
     total_collected_rwf: float
+    total_disbursed_rwf: float
     total_fee_charged_rwf: float
-    total_ddin_cost_rwf: float
+    total_gateway_cost_rwf: float
     total_margin_rwf: float
-
-
-class DdinCostSetting(BaseModel):
-    # float, not condecimal - see the comment on IntegratorOut.fee_percentage.
-    # This model doubles as the PATCH request body, so this does trade away
-    # exact decimal_places=2 input validation - acceptable here since it's a
-    # percentage config knob, not a monetary amount.
-    ddin_cost_percentage: float = Field(gt=0)
 
 
 # -- Self-service portal (app/api/v1/integrator_portal.py) -------------------

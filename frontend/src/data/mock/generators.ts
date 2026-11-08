@@ -11,7 +11,6 @@ import type {
   WebhookDelivery,
   Provider,
   Integrator,
-  IntegratorSummary,
 } from "@/types/api";
 
 const FIRST_NAMES = [
@@ -288,8 +287,6 @@ const INTEGRATOR_NAMES = [
 
 // DDIN's cost to us, mirrored from the default seeded in
 // db_init/002_integrators_and_fees.sql (platform_settings.ddin_cost_percentage).
-export const MOCK_DDIN_COST_PERCENTAGE = 2.0;
-
 export function generateIntegrators(count = 4): Integrator[] {
   const productionStatuses: Integrator["productionStatus"][] = [
     "APPROVED", "PENDING_REVIEW", "NOT_SUBMITTED", "REJECTED",
@@ -317,27 +314,6 @@ export function generateIntegrators(count = 4): Integrator[] {
       isActive: i !== count - 1,
       createdAt: daysAgo(randomInt(30, 400)),
       updatedAt: daysAgo(randomInt(0, 29)),
-    };
-  });
-}
-
-export function generateIntegratorSummaries(integrators: Integrator[]): IntegratorSummary[] {
-  return integrators.map((integrator) => {
-    const successfulTransactions = randomInt(40, 900);
-    const totalCollectedRwf = successfulTransactions * randomInt(3000, 15000);
-    const totalFeeChargedRwf = Math.round((totalCollectedRwf * integrator.feePercentage) / 100);
-    const totalDdinCostRwf = Math.round(
-      (totalCollectedRwf * MOCK_DDIN_COST_PERCENTAGE) / 100
-    );
-    return {
-      integratorId: integrator.id,
-      integratorName: integrator.name,
-      currentFeePercentage: integrator.feePercentage,
-      successfulTransactions,
-      totalCollectedRwf,
-      totalFeeChargedRwf,
-      totalDdinCostRwf,
-      totalMarginRwf: totalFeeChargedRwf - totalDdinCostRwf,
     };
   });
 }

@@ -11,33 +11,27 @@ import type { IntegratorWebhook, IntegratorWebhookCreated } from "@/types/api";
 
 const EVENT_OPTIONS = [
   {
-    id: "collection.success",
-    label: "collection.success",
-    desc: "Fired when a collection completes successfully.",
-    tone: "success" as const,
-  },
-  {
-    id: "collection.failed",
-    label: "collection.failed",
-    desc: "Fired when a collection fails (refunded or refund error).",
-    tone: "destructive" as const,
-  },
-  {
-    id: "collection.pending",
-    label: "collection.pending",
-    desc: "Fired when a collection is acknowledged but awaiting the provider's final result.",
-    tone: "warning" as const,
-  },
-  {
     id: "payment.success",
     label: "payment.success",
-    desc: "Fired when a MoMo or card payment (Accept Payments) is paid.",
+    desc: "A customer paid you (card or MTN MoMo).",
     tone: "success" as const,
   },
   {
     id: "payment.failed",
     label: "payment.failed",
-    desc: "Fired when a MoMo or card payment fails or is cancelled.",
+    desc: "A payment failed or was cancelled.",
+    tone: "destructive" as const,
+  },
+  {
+    id: "disbursement.success",
+    label: "disbursement.success",
+    desc: "A payout you sent was delivered.",
+    tone: "success" as const,
+  },
+  {
+    id: "disbursement.failed",
+    label: "disbursement.failed",
+    desc: "A payout failed - the amount is back in your balance.",
     tone: "destructive" as const,
   },
 ];
@@ -66,7 +60,7 @@ export default function WebhooksPage() {
 
   const [url, setUrl] = React.useState("");
   const [events, setEvents] = React.useState<Set<string>>(
-    new Set(["collection.success", "collection.failed", "collection.pending"])
+    new Set(["payment.success", "payment.failed", "disbursement.success", "disbursement.failed"])
   );
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -213,13 +207,7 @@ export default function WebhooksPage() {
                         }`}
                       >
                         <div className="flex items-center gap-2.5">
-                          <span className={`h-2 w-2 rounded-full ${
-                            ev.tone === "success"
-                              ? "bg-success"
-                              : ev.tone === "warning"
-                              ? "bg-warning"
-                              : "bg-destructive"
-                          }`} />
+                          <span className={`h-2 w-2 rounded-full ${ev.tone === "success" ? "bg-success" : "bg-destructive"}`} />
                           <span className="font-mono text-xs font-medium text-foreground">{ev.label}</span>
                         </div>
                         {checked && <Check className="h-4 w-4 text-primary" />}
@@ -317,13 +305,7 @@ export default function WebhooksPage() {
                         {wh.events.map((ev) => (
                           <StatusBadge
                             key={ev}
-                            variant={
-                              ev === "collection.success"
-                                ? "success"
-                                : ev === "collection.pending"
-                                ? "warning"
-                                : "destructive"
-                            }
+                            variant={ev.endsWith(".success") ? "success" : ev.endsWith(".failed") ? "destructive" : "outline"}
                           >
                             {ev}
                           </StatusBadge>
@@ -372,7 +354,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
   }
 
   const event = JSON.parse(req.body);
-  console.log(event.event, event.status); // e.g. "collection.success", "SUCCESS"
+  console.log(event.event, event.status); // e.g. "payment.success", "SUCCESS"
   res.status(200).json({ received: true });
 });`}
           </pre>

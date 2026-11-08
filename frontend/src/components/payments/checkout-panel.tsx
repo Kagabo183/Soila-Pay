@@ -20,10 +20,11 @@ const METHODS: {
   hint: string;
   Logo: React.ComponentType<{ className?: string }>;
 }[] = [
-  { id: "MTN_MOMO", title: "MTN MoMo", hint: "Approve on the phone with a PIN", Logo: MtnMomoLogo },
+  // Cards first - that's the main product; MoMo stays available.
   { id: "VISA", title: "Visa", hint: "Debit or credit card", Logo: VisaLogo },
   { id: "MASTERCARD", title: "Mastercard", hint: "Debit or credit card", Logo: MastercardLogo },
   { id: "OTHER_CARD", title: "Other card", hint: "Any other bank card", Logo: OtherCardLogo },
+  { id: "MTN_MOMO", title: "MTN MoMo", hint: "Approve on the phone with a PIN", Logo: MtnMomoLogo },
 ];
 
 const QUICK_AMOUNTS = [1000, 5000, 10000, 20000];
@@ -54,7 +55,7 @@ interface CheckoutPanelProps {
 
 export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPanelProps) {
   const [step, setStep] = React.useState<Step>("method");
-  const [channel, setChannel] = React.useState<PaymentChannel>("MTN_MOMO");
+  const [channel, setChannel] = React.useState<PaymentChannel>("VISA");
   const [amount, setAmount] = React.useState("");
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -141,8 +142,10 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
       setPayment(p);
       onChangeRef.current?.(p);
       if (p.status === "PENDING") {
+        // Card: the customer opens LMBTech's page with the button on the
+        // next screen. Not auto-opened - window.open after an await is
+        // blocked by popup blockers, so the page would silently never show.
         setStep("waiting");
-        if (p.redirectUrl) window.open(p.redirectUrl, "_blank", "noopener");
       } else {
         setStep("done");
       }
@@ -332,12 +335,17 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
               </>
             ) : (
               <>
-                <p className="bk-display mt-6 text-3xl font-bold">Finish on the card page</p>
-                <p className="mt-2 max-w-sm text-sm">The secure card page opened in a new tab. This screen updates when the bank confirms.</p>
-                {payment.redirectUrl && (
-                  <a href={payment.redirectUrl} target="_blank" rel="noopener noreferrer" className="bk-btn bk-fill-blue mt-5">
-                    <ExternalLink className="h-4 w-4" /> Open card page
+                <p className="bk-display mt-6 text-3xl font-bold">Enter the card details</p>
+                <p className="mt-2 max-w-sm text-sm">
+                  Press the button to open the bank&apos;s secure card page for <b>{rwf(payment.amountRwf)}</b>. This screen updates by itself when the bank
+                  confirms.
+                </p>
+                {payment.redirectUrl ? (
+                  <a href={payment.redirectUrl} target="_blank" rel="noopener noreferrer" className="bk-btn bk-fill-blue mt-5 h-14 px-6 text-base">
+                    <Lock className="h-5 w-5" /> Continue to secure card page <ExternalLink className="h-4 w-4" />
                   </a>
+                ) : (
+                  <p className="bk-box bk-fill-red mt-5 p-3 text-sm font-semibold">The gateway did not send a card page. Cancel and try again.</p>
                 )}
               </>
             )}
@@ -410,6 +418,12 @@ function Receipt({ payment, onAgain, onRetry }: { payment: Payment; onAgain: () 
       <dl className="bk-box mt-5 w-full max-w-sm divide-y-2 divide-[var(--bk-ink)] text-left text-sm">
         <Row label="Amount" value={<b className="bk-display text-base">{rwf(payment.amountRwf)}</b>} />
         <Row label="Paid with" value={channelLabel(payment.channel)} />
+        {ok && payment.feeAmountRwf !== null && (
+          <Row label={`Fee${payment.feePercentage !== null ? ` (${payment.feePercentage}%)` : ""}`} value={rwf(payment.feeAmountRwf)} />
+        )}
+        {ok && payment.gatewayCostAmountRwf !== null && (
+          <Row label={`LMBTech (${payment.gatewayCostPercentage}%)`} value={`−${rwf(payment.gatewayCostAmountRwf)}`} />
+        )}
         <Row label="Customer" value={payment.customerName} />
         {payment.description && payment.description !== "payment" && <Row label="For" value={payment.description} />}
         <Row

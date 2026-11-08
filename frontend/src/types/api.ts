@@ -344,14 +344,15 @@ export interface IntegratorUpdateRequest {
   isActive?: boolean;
 }
 
+/** Per-integrator totals from the LMBTech ledger (successful rows only). */
 export interface IntegratorSummary {
   integratorId: number;
   integratorName: string;
-  currentFeePercentage: number;
   successfulTransactions: number;
   totalCollectedRwf: number;
+  totalDisbursedRwf: number;
   totalFeeChargedRwf: number;
-  totalDdinCostRwf: number;
+  totalGatewayCostRwf: number;
   totalMarginRwf: number;
 }
 

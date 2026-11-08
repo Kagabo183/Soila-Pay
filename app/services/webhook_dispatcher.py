@@ -1,3 +1,6 @@
+"""Signed webhook deliveries to integrators (payment.* and disbursement.*).
+Each delivery carries X-Soila-Signature: sha256=<HMAC-SHA256 of the raw body
+with the subscription's secret> and X-Soila-Event."""
 import asyncio
 import hashlib
 import hmac
@@ -8,22 +11,27 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-EVENT_COLLECTION_SUCCESS = "collection.success"
-EVENT_COLLECTION_FAILED = "collection.failed"
-EVENT_COLLECTION_PENDING = "collection.pending"
+
+def _iso(value):
+    return value.isoformat() if value else None
 
 
-def _build_payload(event: str, row: dict) -> dict:
+def _build_payment_payload(event: str, row: dict) -> dict:
     return {
         "event": event,
-        "idempotency_key": row.get("idempotency_key"),
+        "reference_id": row.get("reference_id"),
+        "direction": row.get("direction"),
         "status": row.get("status"),
-        "provider": row.get("provider"),
-        "customer_account_number": row.get("customer_account_number"),
-        "customer_name": row.get("customer_name"),
+        "method": row.get("method"),
+        "channel": row.get("channel"),
         "amount_rwf": float(row["amount_rwf"]) if row.get("amount_rwf") is not None else None,
-        "provider_transaction_reference": row.get("provider_transaction_reference"),
-        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        "fee_rwf": float(row["fee_amount_rwf"]) if row.get("fee_amount_rwf") is not None else None,
+        "customer_name": row.get("customer_name"),
+        "gateway_transaction_id": row.get("gateway_transaction_id"),
+        "message": row.get("status_message"),
+        "is_test": bool(row.get("is_test")),
+        "created_at": _iso(row.get("created_at")),
+        "completed_at": _iso(row.get("completed_at")),
     }
 
 
@@ -41,48 +49,12 @@ async def _deliver_one(callback_url: str, secret: str, event: str, payload: dict
                     "X-Soila-Event": event,
                 },
             )
-        logger.info(
-            "webhook_delivered",
-            extra={"url": callback_url, "event": event, "status": resp.status_code},
-        )
+        logger.info("webhook_delivered", extra={"url": callback_url, "event": event, "status": resp.status_code})
     except Exception as exc:
-        logger.warning(
-            "webhook_delivery_failed",
-            extra={"url": callback_url, "event": event, "error": str(exc)},
-        )
-
-
-def _build_payment_payload(event: str, row: dict) -> dict:
-    def _iso(value):
-        return value.isoformat() if value else None
-
-    return {
-        "event": event,
-        "reference_id": row.get("reference_id"),
-        "status": row.get("status"),
-        "method": row.get("method"),
-        "channel": row.get("channel"),
-        "amount_rwf": float(row["amount_rwf"]) if row.get("amount_rwf") is not None else None,
-        "customer_name": row.get("customer_name"),
-        "gateway_transaction_id": row.get("gateway_transaction_id"),
-        "message": row.get("status_message"),
-        "is_test": bool(row.get("is_test")),
-        "created_at": _iso(row.get("created_at")),
-        "completed_at": _iso(row.get("completed_at")),
-    }
+        logger.warning("webhook_delivery_failed", extra={"url": callback_url, "event": event, "error": str(exc)})
 
 
 async def dispatch_payment(webhook_rows: list[dict], event: str, row: dict) -> None:
     payload = _build_payment_payload(event, row)
     for webhook in webhook_rows:
-        asyncio.create_task(
-            _deliver_one(webhook["callback_url"], webhook["secret"], event, payload)
-        )
-
-
-async def dispatch(webhook_rows: list[dict], event: str, row: dict) -> None:
-    payload = _build_payload(event, row)
-    for webhook in webhook_rows:
-        asyncio.create_task(
-            _deliver_one(webhook["callback_url"], webhook["secret"], event, payload)
-        )
+        asyncio.create_task(_deliver_one(webhook["callback_url"], webhook["secret"], event, payload))

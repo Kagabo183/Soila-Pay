@@ -1,0 +1,15 @@
+meta {
+  name: Payment - Status
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/payments/{{paymentRef}}
+  body: none
+  auth: none
+}
+
+headers {
+  Integrator-Key: {{integratorKey}}
+}

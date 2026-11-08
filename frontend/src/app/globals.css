@@ -197,6 +197,9 @@ body {
   --bk-shadow-sm: 3px 3px 0 0 var(--bk-ink);
 }
 
+/* In the components layer so Tailwind utilities (pl-9, pr-16, ...) still
+ * override these per element. */
+@layer components {
 .bk-display {
   font-family: var(--font-brutal), var(--font-sans), sans-serif;
   letter-spacing: -0.02em;
@@ -319,6 +322,7 @@ body {
   padding: 0.75rem;
   overflow-x: auto;
   white-space: pre;
+}
 }
 
 @media (prefers-reduced-motion: reduce) {

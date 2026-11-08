@@ -1,0 +1,39 @@
+meta {
+  name: Payment - Visa
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Integrator-Key: {{integratorKey}}
+}
+
+body:json {
+  {
+    "channel": "VISA",
+    "amount_rwf": 1000,
+    "customer_name": "Test Customer",
+    "customer_email": "customer@example.com",
+    "description": "Bruno test"
+  }
+}
+
+script:post-response {
+  // Keep the reference so "Payment - Status" can look it up.
+  if (res.body.reference_id) {
+    bru.setEnvVar("paymentRef", res.body.reference_id);
+  }
+}
+
+docs {
+  Collects a card payment through LMBTech. In LMBTech Test Mode the
+  response is an instant simulated SUCCESS; in production it's PENDING with
+  a redirect_url for the customer to enter their card on the secure page.
+}

@@ -2,21 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Terminal,
-  BookOpen,
-  Settings,
-  Users,
-  Radio,
-  Send,
-  Zap,
-  Wallet,
-  Receipt,
-  ChevronsLeft,
-  ChevronsRight,
-  CreditCard,
-} from "lucide-react";
+import { LayoutDashboard, BookOpen, Users, Send, Zap, Receipt, ChevronsLeft, ChevronsRight, CreditCard } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -24,27 +10,19 @@ const NAV_SECTIONS = [
   {
     label: "Overview",
     items: [
-      { href: "/dashboard", label: "Provider Dashboard", icon: LayoutDashboard },
-      { href: "/payments", label: "Accept Payments", icon: CreditCard },
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/payments", label: "Collections", icon: CreditCard },
+      { href: "/disbursements", label: "Disbursements", icon: Send },
       { href: "/transactions", label: "Transactions", icon: Receipt },
     ],
   },
   {
-    label: "Developer Tools",
-    items: [
-      { href: "/playground", label: "API Playground", icon: Terminal },
-      { href: "/developers", label: "Developer Portal", icon: BookOpen },
-    ],
+    label: "Business",
+    items: [{ href: "/settings/integrators", label: "Integrators & Pricing", icon: Users }],
   },
   {
-    label: "Configuration",
-    items: [
-      { href: "/settings/api", label: "API Integration", icon: Settings },
-      { href: "/settings/integrators", label: "Integrators & Margin", icon: Users },
-      { href: "/settings/test-collection", label: "Test Collection", icon: Send },
-      { href: "/settings/ddin-diagnostics", label: "DDIN Diagnostics", icon: Radio },
-      { href: "/settings/fineract", label: "Fineract Float", icon: Wallet },
-    ],
+    label: "Developers",
+    items: [{ href: "/developers", label: "API Docs", icon: BookOpen }],
   },
 ];
 

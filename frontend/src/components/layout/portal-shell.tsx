@@ -7,12 +7,12 @@ import { cn } from "@/lib/utils";
 import { useIntegratorPortalStore } from "@/store/integrator-portal-store";
 
 const NAV = [
-  { href: "/portal/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "/portal/payments", label: "Accept Payments", icon: CreditCard },
-  { href: "/portal/collections", label: "Collections", icon: Send },
+  { href: "/portal/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/portal/payments", label: "Collections", icon: CreditCard },
+  { href: "/portal/disbursements", label: "Disbursements", icon: Send },
   { href: "/portal/transactions", label: "Transactions", icon: History },
   { href: "/portal/webhooks", label: "Webhooks", icon: Bell },
-  { href: "/portal/dev-tools", label: "Dev Tools", icon: Code2 },
+  { href: "/portal/dev-tools", label: "API Docs", icon: Code2 },
   { href: "/portal/go-live", label: "Go Live", icon: Rocket },
   { href: "/portal/account", label: "Account", icon: UserCog },
 ];

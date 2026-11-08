@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Pencil, Copy, TrendingUp, Percent, Users, Wallet, FileText } from "lucide-react";
+import { Plus, Pencil, Copy, TrendingUp, ArrowUpRight, Users, Wallet, FileText } from "lucide-react";
+import { PricingPanel } from "@/components/payments/pricing-panel";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,13 +29,11 @@ export default function IntegratorsPage() {
   const confirm = useConfirm();
   const [integrators, setIntegrators] = React.useState<Integrator[]>([]);
   const [summary, setSummary] = React.useState<IntegratorSummary[]>([]);
-  const [ddinCost, setDdinCost] = React.useState<number>(2.0);
   const [loading, setLoading] = React.useState(true);
 
   const [modalOpen, setModalOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Integrator | null>(null);
   const [nameDraft, setNameDraft] = React.useState("");
-  const [feeDraft, setFeeDraft] = React.useState("2.20");
   const [phoneDraft, setPhoneDraft] = React.useState("");
   const [passwordDraft, setPasswordDraft] = React.useState("");
   const [saving, setSaving] = React.useState(false);
@@ -52,14 +51,9 @@ export default function IntegratorsPage() {
 
   async function refresh() {
     setLoading(true);
-    const [integratorList, summaryList, cost] = await Promise.all([
-      integratorsService.list(),
-      integratorsService.summary(),
-      integratorsService.getDdinCostPercentage(),
-    ]);
+    const [integratorList, summaryList] = await Promise.all([integratorsService.list(), integratorsService.summary()]);
     setIntegrators(integratorList);
     setSummary(summaryList);
-    setDdinCost(cost);
     setLoading(false);
     await loadDocuments(integratorList);
   }
@@ -67,15 +61,10 @@ export default function IntegratorsPage() {
   React.useEffect(() => {
     let mounted = true;
     (async () => {
-      const [integratorList, summaryList, cost] = await Promise.all([
-        integratorsService.list(),
-        integratorsService.summary(),
-        integratorsService.getDdinCostPercentage(),
-      ]);
+      const [integratorList, summaryList] = await Promise.all([integratorsService.list(), integratorsService.summary()]);
       if (!mounted) return;
       setIntegrators(integratorList);
       setSummary(summaryList);
-      setDdinCost(cost);
       setLoading(false);
       await loadDocuments(integratorList);
     })();
@@ -87,7 +76,6 @@ export default function IntegratorsPage() {
   function openCreate() {
     setEditing(null);
     setNameDraft("");
-    setFeeDraft("2.20");
     setPhoneDraft("");
     setPasswordDraft("");
     setModalOpen(true);
@@ -96,14 +84,13 @@ export default function IntegratorsPage() {
   function openEdit(integrator: Integrator) {
     setEditing(integrator);
     setNameDraft(integrator.name);
-    setFeeDraft(integrator.feePercentage.toFixed(2));
     setModalOpen(true);
   }
 
   async function handleSaveIntegrator() {
-    const feePercentage = Number(feeDraft);
-    if (!nameDraft.trim() || !Number.isFinite(feePercentage) || feePercentage <= 0) {
-      toast({ title: "Check the form", description: "Name and fee % are required.", variant: "error" });
+    // Fees are set in the Pricing section below (collections + payouts).
+    if (!nameDraft.trim()) {
+      toast({ title: "Check the form", description: "A name is required.", variant: "error" });
       return;
     }
     if (!editing && (phoneDraft.trim() || passwordDraft) && (!phoneDraft.trim() || passwordDraft.length < 8)) {
@@ -117,12 +104,12 @@ export default function IntegratorsPage() {
     setSaving(true);
     try {
       if (editing) {
-        await integratorsService.update(editing.id, { name: nameDraft, feePercentage });
-        toast({ title: "Integrator updated", description: `${nameDraft} now charged at ${feePercentage}%.`, variant: "success" });
+        await integratorsService.update(editing.id, { name: nameDraft });
+        toast({ title: "Integrator updated", variant: "success" });
       } else {
         const created = await integratorsService.create({
           name: nameDraft,
-          feePercentage,
+          feePercentage: 2.2, // legacy column; real fees come from Pricing
           ...(phoneDraft.trim() ? { phoneNumber: phoneDraft.trim(), password: passwordDraft } : {}),
         });
         toast({
@@ -147,7 +134,7 @@ export default function IntegratorsPage() {
     await integratorsService.update(integrator.id, { isActive: !integrator.isActive });
     toast({
       title: integrator.isActive ? "Integrator disabled" : "Integrator enabled",
-      description: `${integrator.name} ${integrator.isActive ? "can no longer" : "can now"} call the purchase API.`,
+      description: `${integrator.name} ${integrator.isActive ? "can no longer" : "can now"} take payments or send payouts.`,
       variant: "default",
     });
     await refresh();
@@ -186,9 +173,10 @@ export default function IntegratorsPage() {
   const totals = summary.reduce(
     (acc, s) => ({
       collected: acc.collected + s.totalCollectedRwf,
+      disbursed: acc.disbursed + s.totalDisbursedRwf,
       margin: acc.margin + s.totalMarginRwf,
     }),
-    { collected: 0, margin: 0 }
+    { collected: 0, disbursed: 0, margin: 0 }
   );
 
   const columns: Column<Integrator>[] = [
@@ -208,12 +196,6 @@ export default function IntegratorsPage() {
           </button>
         </div>
       ),
-    },
-    {
-      key: "feePercentage",
-      header: "Fee charged",
-      align: "right",
-      render: (row) => <span className="font-medium">{row.feePercentage.toFixed(2)}%</span>,
     },
     {
       key: "isActive",
@@ -306,13 +288,18 @@ export default function IntegratorsPage() {
     { key: "integratorName", header: "Integrator" },
     { key: "successfulTransactions", header: "Txns", align: "right" },
     { key: "totalCollectedRwf", header: "Collected", align: "right", render: (r) => formatRwf(r.totalCollectedRwf) },
-    { key: "totalFeeChargedRwf", header: "We charged", align: "right", render: (r) => formatRwf(r.totalFeeChargedRwf) },
-    { key: "totalDdinCostRwf", header: "DDIN cost", align: "right", render: (r) => formatRwf(r.totalDdinCostRwf) },
+    { key: "totalDisbursedRwf", header: "Paid out", align: "right", render: (r) => formatRwf(r.totalDisbursedRwf) },
+    { key: "totalFeeChargedRwf", header: "Fees charged", align: "right", render: (r) => formatRwf(r.totalFeeChargedRwf) },
+    { key: "totalGatewayCostRwf", header: "LMBTech cost", align: "right", render: (r) => `−${formatRwf(r.totalGatewayCostRwf)}` },
     {
       key: "totalMarginRwf",
       header: "Our margin",
       align: "right",
-      render: (r) => <span className="font-medium text-success">{formatRwf(r.totalMarginRwf)}</span>,
+      render: (r) => (
+        <span className={r.totalMarginRwf < 0 ? "font-semibold text-destructive" : "font-semibold text-success"}>
+          {formatRwf(r.totalMarginRwf)}
+        </span>
+      ),
     },
   ];
 
@@ -320,12 +307,10 @@ export default function IntegratorsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <Breadcrumb items={[{ label: "Console" }, { label: "Integrators" }]} />
-          <h1 className="mt-1 text-xl font-semibold text-foreground">Integrators & Margin</h1>
+          <Breadcrumb items={[{ label: "Console" }, { label: "Integrators & Pricing" }]} />
+          <h1 className="mt-1 text-xl font-semibold text-foreground">Integrators & Pricing</h1>
           <p className="text-sm text-muted-foreground">
-            Each integrator is charged its own fee % on top of what DDIN charges Soila Pay.
-            Integrator fees are editable right here - no code change or deploy needed. DDIN&apos;s
-            cost is DDIN&apos;s call, not ours, so it&apos;s shown read-only below.
+            The businesses selling with Soila Pay, what each one pays you on collections and payouts, and the margin left after LMBTech&apos;s cut.
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             Integrators can also sign themselves up at{" "}
@@ -347,29 +332,19 @@ export default function IntegratorsPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Integrators" value={String(integrators.length)} icon={Users} />
         <StatCard label="Total collected" value={formatRwf(totals.collected)} icon={Wallet} accent="primary" />
-        <StatCard label="Total margin earned" value={formatRwf(totals.margin)} icon={TrendingUp} accent="success" />
-        <StatCard label="DDIN cost (current)" value={`${ddinCost.toFixed(2)}%`} icon={Percent} accent="warning" />
+        <StatCard label="Total paid out" value={formatRwf(totals.disbursed)} icon={ArrowUpRight} accent="warning" />
+        <StatCard
+          label="Total margin earned"
+          value={formatRwf(totals.margin)}
+          icon={TrendingUp}
+          accent={totals.margin < 0 ? "destructive" : "success"}
+        />
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>DDIN cost percentage</CardTitle>
-          <CardDescription>
-            What DDIN charges Soila Pay per collection - DDIN sets this, not us, so it&apos;s
-            read-only here. Every integrator&apos;s margin is computed as (their fee %) minus this
-            value at the moment each purchase succeeds. If DDIN changes their published rate,
-            update it via <code className="rounded bg-secondary px-1 py-0.5 font-mono text-xs">PATCH /api/v1/admin/settings/ddin-cost-percentage</code>.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-2xl font-semibold text-foreground">{ddinCost.toFixed(2)}%</p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <CardTitle>Integrators</CardTitle>
-          <CardDescription>Who can call /api/v1/collection/collect, and at what fee.</CardDescription>
+          <CardDescription>Who can take payments (POST /api/v1/payments) and send payouts (POST /api/v1/disbursements).</CardDescription>
         </CardHeader>
         <CardContent>
           <DataTable
@@ -381,6 +356,10 @@ export default function IntegratorsPage() {
           />
         </CardContent>
       </Card>
+
+      <div id="pricing" className="scroll-mt-4">
+        <PricingPanel onSaved={refresh} />
+      </div>
 
       <Card>
         <CardHeader>
@@ -404,7 +383,7 @@ export default function IntegratorsPage() {
         title={editing ? `Edit ${editing.name}` : "New Integrator"}
         description={
           editing
-            ? "Changes apply to future purchases - past transactions keep their original rate."
+            ? "Rename the integrator. Fees are set in the Pricing section."
             : "Issues a new API key the integrator sends as the Integrator-Key header."
         }
         footer={
@@ -419,15 +398,12 @@ export default function IntegratorsPage() {
         }
       >
         <div className="flex flex-col gap-4">
-          <Input label="Name" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} placeholder="Acme Aggregator" />
           <Input
-            label="Fee percentage"
-            type="number"
-            step="0.01"
-            min="0"
-            value={feeDraft}
-            onChange={(e) => setFeeDraft(e.target.value)}
-            hint="What Soila Pay charges this integrator per collection (DDIN's own cost is set separately above)."
+            label="Name"
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            placeholder="Acme Shop"
+            hint="Fees are set in the Pricing section of this page."
           />
           {!editing && (
             <>
@@ -477,7 +453,7 @@ export default function IntegratorsPage() {
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
           Send this as the <code className="rounded bg-secondary px-1 py-0.5 font-mono">Integrator-Key</code>{" "}
-          header on every <code className="rounded bg-secondary px-1 py-0.5 font-mono">POST /api/v1/collection/collect</code> call.
+          header on every API call (payments and payouts).
         </p>
       </Modal>
     </div>

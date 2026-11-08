@@ -1,29 +1,38 @@
 "use client";
 
 import * as React from "react";
-import { Copy, CheckCircle2, Clock, XCircle } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import Link from "next/link";
+import { Check, Copy } from "lucide-react";
+import { OverviewDashboard } from "@/components/payments/overview-dashboard";
+import { BkPanel } from "@/components/payments/brutal";
 import { useIntegratorPortalStore } from "@/store/integrator-portal-store";
-import { toast } from "@/store/toast-store";
 
-function maskKey(key: string) {
-  if (key.length <= 10) return key;
-  return `${key.slice(0, 7)}${"*".repeat(10)}${key.slice(-4)}`;
-}
+const STATUS_LABEL = {
+  NOT_SUBMITTED: "Not submitted",
+  PENDING_REVIEW: "Under review",
+  APPROVED: "Live",
+  REJECTED: "Rejected",
+} as const;
 
-function copyKey(key: string) {
-  navigator.clipboard?.writeText(key);
-  toast({ title: "Copied to clipboard", variant: "default" });
-}
-
-function ApiKeyRow({ label, value }: { label: string; value: string }) {
+function KeyRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = React.useState(false);
   return (
-    <div>
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-      <div className="mt-1 flex items-center gap-2 rounded-md border border-border bg-secondary/50 px-3 py-2 font-mono text-sm">
-        <span className="flex-1 break-all">{maskKey(value)}</span>
-        <button onClick={() => copyKey(value)} className="text-muted-foreground hover:text-foreground">
-          <Copy className="h-4 w-4" />
+    <div className="min-w-0">
+      <p className="bk-display text-xs font-bold uppercase">{label}</p>
+      <div className="bk-box mt-1 flex items-center gap-2 px-3 py-2">
+        <code className="min-w-0 flex-1 truncate font-mono text-sm">{value}</code>
+        <button
+          type="button"
+          aria-label={`Copy ${label}`}
+          onClick={() =>
+            navigator.clipboard?.writeText(value).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1200);
+            })
+          }
+          className="bk-btn bk-fill-paper min-h-8 px-2"
+        >
+          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         </button>
       </div>
     </div>
@@ -31,85 +40,54 @@ function ApiKeyRow({ label, value }: { label: string; value: string }) {
 }
 
 export default function PortalOverviewPage() {
+  const token = useIntegratorPortalStore((s) => s.token);
   const integrator = useIntegratorPortalStore((s) => s.integrator);
-  if (!integrator) return null;
-
-  const statusIcon =
-    integrator.productionStatus === "APPROVED" ? (
-      <CheckCircle2 className="h-4 w-4 text-success" />
-    ) : integrator.productionStatus === "PENDING_REVIEW" ? (
-      <Clock className="h-4 w-4 text-warning" />
-    ) : integrator.productionStatus === "REJECTED" ? (
-      <XCircle className="h-4 w-4 text-destructive" />
-    ) : null;
-
-  const statusLabel: Record<typeof integrator.productionStatus, string> = {
-    NOT_SUBMITTED: "Not submitted",
-    PENDING_REVIEW: "Under review",
-    APPROVED: "Live",
-    REJECTED: "Rejected",
-  };
+  if (!token || !integrator) return null;
 
   return (
-    <div className="flex max-w-2xl flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold text-foreground">Overview</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Your API keys and account status.</p>
+    <div className="-m-6 min-h-full bg-[var(--bk-page)] p-4 text-[var(--bk-ink)] sm:p-6">
+      <div className="mx-auto flex min-w-0 max-w-6xl flex-col gap-6">
+        <header>
+          <h1 className="bk-display text-3xl font-bold uppercase sm:text-4xl">Hello, {integrator.name}</h1>
+          <p className="bk-muted mt-1 text-sm">Your money in, money out and balance - live.</p>
+        </header>
+
+        <OverviewDashboard
+          scope={{ kind: "portal", token }}
+          links={{ collections: "/portal/payments", disbursements: "/portal/disbursements", transactions: "/portal/transactions" }}
+        />
+
+        <BkPanel
+          title="Your API keys"
+          tone="bk-fill-yellow"
+          action={
+            <span className="bk-tag bk-fill-paper">
+              Production: {STATUS_LABEL[integrator.productionStatus]}
+            </span>
+          }
+        >
+          <div className="grid gap-4 md:grid-cols-2">
+            <KeyRow label="Sandbox key (testing)" value={integrator.sandboxApiKey} />
+            {integrator.productionApiKey ? (
+              <KeyRow label="Production key (real money)" value={integrator.productionApiKey} />
+            ) : (
+              <div className="bk-box flex items-center justify-between gap-3 p-3 text-sm">
+                <span>No production key yet.</span>
+                <Link href="/portal/go-live" className="bk-btn bk-fill-green min-h-9 px-3 text-xs">
+                  Go live →
+                </Link>
+              </div>
+            )}
+          </div>
+          <p className="bk-muted mt-3 text-xs">
+            Send the key as the <code className="font-mono">Integrator-Key</code> header. Examples are in{" "}
+            <Link href="/portal/dev-tools" className="font-semibold underline">
+              API Docs
+            </Link>
+            .
+          </p>
+        </BkPanel>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Sandbox API Key</CardTitle>
-          <CardDescription>
-            Use this key to test collections. Routes to a safe simulator — no real money moves.
-            Pass it as the <code className="rounded bg-secondary px-1 py-0.5 font-mono text-xs">Integrator-Key</code> header.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ApiKeyRow label="Sandbox Key" value={integrator.sandboxApiKey} />
-        </CardContent>
-      </Card>
-
-      {integrator.productionApiKey && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Production API Key</CardTitle>
-            <CardDescription>
-              Live key — real money, real DDIN collections. Keep it secret.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ApiKeyRow label="Production Key" value={integrator.productionApiKey} />
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Account</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <p className="text-xs text-muted-foreground">Name</p>
-            <p className="font-medium text-foreground">{integrator.name}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Phone</p>
-            <p className="font-medium text-foreground">{integrator.phoneNumber ?? "—"}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Production status</p>
-            <p className="flex items-center gap-1.5 font-medium text-foreground">
-              {statusIcon}
-              {statusLabel[integrator.productionStatus]}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Fee</p>
-            <p className="font-medium text-foreground">{integrator.feePercentage}%</p>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

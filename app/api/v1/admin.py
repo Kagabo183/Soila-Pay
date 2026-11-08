@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 
 from app.exceptions import FineractError
 from app.schemas.integrator import (
-    DdinCostSetting,
     DocumentType,
     IntegratorCreate,
     IntegratorDocumentOut,
@@ -56,8 +55,8 @@ async def create_integrator(body: IntegratorCreate, request: Request):
 
 @router.get("/integrators/summary", response_model=list[IntegratorSummary])
 async def integrators_revenue_summary(request: Request):
-    """Per-integrator collected/charged/DDIN-cost/margin totals - the
-    "where does my margin actually come from" view."""
+    """Per-integrator collected/disbursed/fees/LMBTech-cost/margin totals -
+    the "where does my margin actually come from" view."""
     return await request.app.state.integrator_repo.revenue_summary()
 
 
@@ -67,11 +66,26 @@ async def update_integrator(integrator_id: int, body: IntegratorUpdate, request:
     existing = await repo.get_by_id(integrator_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Integrator not found")
+    pricing = await request.app.state.payment_service.pricing()
+    checks = [
+        (body.payment_fee_percentage, body.clear_payment_fee, pricing.gateway_cost_percentage, "Collection", "payment"),
+        (body.payout_fee_percentage, body.clear_payout_fee, pricing.payout_cost_percentage, "Payout", "payout"),
+    ]
+    for fee, clearing, cost, label, noun in checks:
+        if fee is not None and not clearing and Decimal(fee) < cost:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label} fee {fee}% is below LMBTech's {cost}% cost - every {noun} would lose money.",
+            )
     return await repo.update(
         integrator_id,
         name=body.name,
         fee_percentage=body.fee_percentage,
         is_active=body.is_active,
+        payment_fee_percentage=body.payment_fee_percentage,
+        clear_payment_fee=body.clear_payment_fee,
+        payout_fee_percentage=body.payout_fee_percentage,
+        clear_payout_fee=body.clear_payout_fee,
     )
 
 
@@ -123,18 +137,7 @@ async def download_integrator_document(
     )
 
 
-@router.get("/settings/ddin-cost-percentage", response_model=DdinCostSetting)
-async def get_ddin_cost_percentage(request: Request):
-    value = await request.app.state.integrator_repo.get_setting("ddin_cost_percentage")
-    return DdinCostSetting(ddin_cost_percentage=Decimal(value) if value else Decimal("2.00"))
-
-
-@router.patch("/settings/ddin-cost-percentage", response_model=DdinCostSetting)
-async def update_ddin_cost_percentage(body: DdinCostSetting, request: Request):
-    await request.app.state.integrator_repo.set_setting(
-        "ddin_cost_percentage", str(body.ddin_cost_percentage)
-    )
-    return body
+# -- Fineract (kept for a planned future flow; no console page uses it now) --
 
 
 class FineractTopupRequest(BaseModel):

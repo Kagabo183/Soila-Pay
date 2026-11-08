@@ -176,6 +176,66 @@ class LMBTechClient:
             redirect_url=redirect_url,
         )
 
+    async def payout(
+        self,
+        *,
+        reference_id: str,
+        amount: Decimal,
+        recipient_name: str,
+        recipient_phone: str,
+        description: str,
+        callback_url: str,
+    ) -> GatewayResult:
+        """Send money from the Soila Pay LMBTech balance to an MTN MoMo number
+        (action=payout). Per LMBTech's docs, `email` is OUR account's email and
+        `name` is the recipient; the account needs payout permission and
+        enough balance (HTTP 402 "Insufficient balance for payout" otherwise).
+        Documented response: {"status":"success","data":{"reference_id",
+        "amount","status":"pending"},"message":"Payout initiated successfully"}
+        - so the outcome usually resolves later via the status API. Not yet
+        observed live (a test payout needs explicit go-ahead), hence the
+        defensive parsing shared with pay()."""
+        account_email = self._settings.lmbtech_account_email
+        if not account_email:
+            raise LMBTechError("Payouts are not set up yet (LMBTECH_ACCOUNT_EMAIL is missing)")
+        payload: dict[str, Any] = {
+            "email": account_email,
+            "name": recipient_name,
+            "payment_method": "MTN_MOMO_RWA",
+            "amount": int(amount),
+            "payer_phone": recipient_phone,
+            "service_paid": (description or "payout")[:60],
+            "reference_id": reference_id,
+            "callback_url": callback_url,
+            "action": "payout",
+        }
+        try:
+            resp = await self._client.post(self._settings.lmbtech_base_url, json=payload, headers=self._headers())
+        except httpx.TimeoutException:
+            logger.info("lmbtech_payout_timeout_pending", extra={"reference_id": reference_id})
+            return GatewayResult(status="PENDING", message="Payout sent, waiting for confirmation")
+        except httpx.HTTPError as exc:
+            raise LMBTechError(f"Could not reach the payment gateway: {exc.__class__.__name__}") from exc
+
+        data = self._json(resp)
+        if resp.status_code == 401:
+            raise LMBTechError("Payment gateway rejected our credentials", status_code=401)
+        if resp.status_code == 402:
+            raise LMBTechError("Not enough balance at LMBTech for this payout", status_code=402)
+        if resp.is_error or data.get("status") in (False, "fail", "failed", "error"):
+            raise LMBTechError(str(data.get("message") or f"Payout refused (HTTP {resp.status_code})"), resp.status_code)
+
+        envelope = data.get("data") if isinstance(data.get("data"), dict) else {}
+        # The inner status is the payout's own state ("pending" while MTN
+        # processes it); the outer "success" only means "request accepted".
+        status = normalize_status(envelope.get("status") or data.get("status"))
+        logger.info("lmbtech_payout_accepted", extra={"reference_id": reference_id, "status": status})
+        return GatewayResult(
+            status=status,
+            message=data.get("message"),
+            transaction_id=(envelope.get("transaction_id") or data.get("transaction_id")) or None,
+        )
+
     async def get_status(self, reference_id: str) -> Optional[GatewayResult]:
         """None if the gateway has no record of this reference (yet)."""
         try:

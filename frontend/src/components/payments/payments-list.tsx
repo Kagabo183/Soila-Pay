@@ -6,6 +6,7 @@ import { cn, formatDateTime } from "@/lib/utils";
 import {
   paymentErrorMessage,
   paymentService,
+  type Direction,
   type Payment,
   type PaymentScope,
   type PaymentStatus,
@@ -21,18 +22,47 @@ const FILTERS: { label: string; status?: PaymentStatus }[] = [
   { label: "Failed", status: "FAILED" },
 ];
 
-export function PaymentSummaryTiles({ summary }: { summary: PaymentSummary | null }) {
-  const tiles = [
-    { label: "Received", value: summary ? rwf(summary.collectedRwf) : "—", sub: summary ? `${summary.successCount} paid` : "", fill: "bk-fill-green" },
-    { label: "MTN MoMo", value: summary ? rwf(summary.momoRwf) : "—", sub: "Mobile money", fill: "bk-fill-yellow" },
-    { label: "Cards", value: summary ? rwf(summary.cardRwf) : "—", sub: "Visa · Mastercard · other", fill: "bk-fill-blue" },
-    {
-      label: "Waiting / failed",
-      value: summary ? `${summary.pendingCount} / ${summary.failedCount}` : "—",
-      sub: summary ? `of ${summary.totalCount} total` : "",
-      fill: "bk-fill-pink",
-    },
-  ];
+export function PaymentSummaryTiles({ summary, admin = false }: { summary: PaymentSummary | null; admin?: boolean }) {
+  const dash = "—";
+  const margin = summary?.marginRwf ?? 0;
+  const tiles = admin
+    ? [
+        {
+          label: "Received",
+          value: summary ? rwf(summary.collectedRwf) : dash,
+          sub: summary ? `${summary.successCount} paid · MoMo ${rwf(summary.momoRwf)} · Cards ${rwf(summary.cardRwf)}` : "",
+          fill: "bk-fill-green",
+        },
+        {
+          label: `LMBTech cost (${summary?.gatewayCostPercentage ?? 5}%)`,
+          value: summary ? rwf(summary.gatewayCostRwf ?? 0) : dash,
+          sub: "On every payment, incl. your own console sales",
+          fill: "bk-fill-orange",
+        },
+        {
+          label: "Fees charged",
+          value: summary ? rwf(summary.feesRwf) : dash,
+          sub: "Paid by integrators",
+          fill: "bk-fill-blue",
+        },
+        {
+          label: "Your margin",
+          value: summary ? rwf(margin) : dash,
+          sub: margin < 0 ? "Losing money on integrator payments - check Pricing" : "On integrator payments: fee − LMBTech cost",
+          fill: margin < 0 ? "bk-fill-red" : "bk-fill-pink",
+        },
+      ]
+    : [
+        { label: "Received", value: summary ? rwf(summary.collectedRwf) : dash, sub: summary ? `${summary.successCount} paid` : "", fill: "bk-fill-green" },
+        { label: "MTN MoMo", value: summary ? rwf(summary.momoRwf) : dash, sub: "Mobile money", fill: "bk-fill-yellow" },
+        { label: "Cards", value: summary ? rwf(summary.cardRwf) : dash, sub: "Visa · Mastercard · other", fill: "bk-fill-blue" },
+        {
+          label: `Fees (${summary?.feePercentage ?? "-"}%)`,
+          value: summary ? rwf(summary.feesRwf) : dash,
+          sub: summary ? `${summary.pendingCount} waiting · ${summary.failedCount} failed` : "",
+          fill: "bk-fill-pink",
+        },
+      ];
   return (
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       {tiles.map((t) => (
@@ -51,10 +81,20 @@ interface PaymentsListProps {
   refreshKey?: number;
   showIntegrator?: boolean;
   compact?: boolean;
+  /** Show only collections or only payouts. */
+  direction?: Direction;
   onSummary?: (summary: PaymentSummary) => void;
 }
 
-export function PaymentsList({ scope, refreshKey = 0, showIntegrator = false, compact = false, onSummary }: PaymentsListProps) {
+export function PaymentsList({
+  scope,
+  refreshKey = 0,
+  showIntegrator = false,
+  compact = false,
+  direction = "COLLECTION",
+  onSummary,
+}: PaymentsListProps) {
+  const payouts = direction === "DISBURSEMENT";
   const [items, setItems] = React.useState<Payment[]>([]);
   const [total, setTotal] = React.useState(0);
   const [page, setPage] = React.useState(1);
@@ -74,8 +114,8 @@ export function PaymentsList({ scope, refreshKey = 0, showIntegrator = false, co
     setError(null);
     try {
       const [list, summary] = await Promise.all([
-        paymentService.list(stableScope, { page, pageSize, status }),
-        paymentService.summary(stableScope),
+        paymentService.list(stableScope, { page, pageSize, status, direction }),
+        paymentService.summary(stableScope, direction),
       ]);
       setItems(list.items);
       setTotal(list.total);
@@ -85,7 +125,7 @@ export function PaymentsList({ scope, refreshKey = 0, showIntegrator = false, co
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, status, stableScope]);
+  }, [page, pageSize, status, direction, stableScope]);
 
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -96,7 +136,7 @@ export function PaymentsList({ scope, refreshKey = 0, showIntegrator = false, co
 
   return (
     <BkPanel
-      title={compact ? "Latest payments" : "All payments"}
+      title={payouts ? (compact ? "Latest payouts" : "All payouts") : compact ? "Latest payments" : "All payments"}
       action={
         <div className="flex flex-wrap items-center gap-2">
           {!compact &&
@@ -124,8 +164,10 @@ export function PaymentsList({ scope, refreshKey = 0, showIntegrator = false, co
         <p className="bk-box bk-fill-red p-3 text-sm font-semibold">{error}</p>
       ) : !loading && items.length === 0 ? (
         <div className="bk-box border-dashed p-8 text-center">
-          <p className="bk-display text-lg font-bold">No payments yet</p>
-          <p className="bk-muted mt-1 text-sm">Take one, or press “Run all” in the Test Lab.</p>
+          <p className="bk-display text-lg font-bold">{payouts ? "No payouts yet" : "No payments yet"}</p>
+          <p className="bk-muted mt-1 text-sm">
+            {payouts ? "Send one with the form." : "Take one, or press “Run all” in the Test Lab."}
+          </p>
         </div>
       ) : (
         <ul className="flex flex-col gap-3">
@@ -144,6 +186,15 @@ export function PaymentsList({ scope, refreshKey = 0, showIntegrator = false, co
                   {showIntegrator && ` · ${p.integratorName ?? "Console"}`}
                 </p>
                 {p.status === "FAILED" && p.statusMessage && <p className="truncate text-xs font-semibold">✕ {p.statusMessage}</p>}
+                {!compact && p.status === "SUCCESS" && (p.feeAmountRwf !== null || p.gatewayCostAmountRwf !== null) && (
+                  <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] font-semibold">
+                    {p.feeAmountRwf !== null && <span>Fee {rwf(p.feeAmountRwf)}{p.feePercentage !== null && ` (${p.feePercentage}%)`}</span>}
+                    {p.gatewayCostAmountRwf !== null && <span>LMBTech −{rwf(p.gatewayCostAmountRwf)}</span>}
+                    {p.marginAmountRwf !== null && (
+                      <span className={p.marginAmountRwf < 0 ? "text-destructive" : ""}>Margin {rwf(p.marginAmountRwf)}</span>
+                    )}
+                  </p>
+                )}
                 <p className="bk-muted truncate font-mono text-[11px]">{p.referenceId}</p>
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5">

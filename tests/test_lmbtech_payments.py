@@ -160,6 +160,145 @@ async def test_status_flat_response_and_not_found():
     assert await client.get_status("SP-NONE") is None
 
 
+def test_money_breakdown_fee_minus_lmbtech_cost():
+    from app.services.payment_service import compute_money
+
+    m = compute_money(Decimal("10000"), Decimal("6.00"), Decimal("5.00"))
+    assert m.fee_amount_rwf == Decimal("600.00")
+    assert m.gateway_cost_amount_rwf == Decimal("500.00")
+    assert m.margin_amount_rwf == Decimal("100.00")
+
+
+def test_money_breakdown_flags_loss_when_fee_below_cost():
+    from app.services.payment_service import compute_money
+
+    m = compute_money(Decimal("1000"), Decimal("2.20"), Decimal("5.00"))
+    assert m.margin_amount_rwf == Decimal("-28.00")
+
+
+def test_console_payment_has_cost_but_no_fee_or_margin():
+    from app.services.payment_service import compute_money
+
+    m = compute_money(Decimal("333"), None, Decimal("5.00"))
+    assert m.fee_amount_rwf is None and m.margin_amount_rwf is None
+    assert m.gateway_cost_amount_rwf == Decimal("16.65")
+
+
+def test_integrator_override_beats_default_fee():
+    from app.services.payment_service import PaymentService, Pricing
+
+    svc = PaymentService.__new__(PaymentService)
+    pricing = Pricing(
+        gateway_cost_percentage=Decimal("5.00"), default_fee_percentage=Decimal("6.00"),
+        payout_cost_percentage=Decimal("5.00"), payout_default_fee_percentage=Decimal("6.50"),
+    )
+    assert svc.fee_for(None, pricing) is None
+    assert svc.fee_for({"payment_fee_percentage": None}, pricing) == Decimal("6.00")
+    assert svc.fee_for({"payment_fee_percentage": Decimal("7.50")}, pricing) == Decimal("7.50")
+    # Payouts use their own default/override, independent of collections.
+    assert svc.fee_for({"payment_fee_percentage": Decimal("7.50"), "payout_fee_percentage": None}, pricing, "DISBURSEMENT") == Decimal("6.50")
+
+
+# -- disbursements (payouts) -----------------------------------------------
+
+def _payout_client(email="merchant@soila.rw") -> LMBTechClient:
+    return LMBTechClient(
+        Settings(
+            lmbtech_base_url=URL, lmbtech_app_key="app_x", lmbtech_secret_key="scrt_y",
+            lmbtech_account_email=email, lmbtech_timeout_seconds=1,
+        )
+    )
+
+
+def _payout_kwargs(**over):
+    kw = dict(
+        reference_id="SD-TEST-1", amount=Decimal("500"), recipient_name="Aline",
+        recipient_phone="+250780000000", description="refund", callback_url="http://localhost:8000/cb",
+    )
+    kw.update(over)
+    return kw
+
+
+@respx.mock
+async def test_payout_sends_documented_fields_and_reads_inner_status():
+    route = respx.post(URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"status": "success", "data": {"reference_id": "SD-TEST-1", "amount": "500.00", "status": "pending"},
+                  "message": "Payout initiated successfully"},
+        )
+    )
+    result = await _payout_client().payout(**_payout_kwargs())
+    # Outer "success" = accepted; the payout itself is still pending.
+    assert result.status == "PENDING"
+    import json as _json
+    sent = _json.loads(route.calls.last.request.content)
+    assert sent["action"] == "payout" and sent["payment_method"] == "MTN_MOMO_RWA"
+    assert sent["email"] == "merchant@soila.rw"  # OUR account email, per LMBTech docs
+    assert sent["name"] == "Aline" and sent["payer_phone"] == "+250780000000"
+
+
+@respx.mock
+async def test_payout_insufficient_balance_is_a_clear_error():
+    respx.post(URL).mock(return_value=httpx.Response(402, json={"status": "fail", "message": "Insufficient balance for payout"}))
+    with pytest.raises(LMBTechError, match="Not enough balance"):
+        await _payout_client().payout(**_payout_kwargs())
+
+
+@respx.mock
+async def test_payout_timeout_means_pending():
+    respx.post(URL).mock(side_effect=httpx.ReadTimeout("slow"))
+    assert (await _payout_client().payout(**_payout_kwargs())).status == "PENDING"
+
+
+async def test_payout_refused_without_account_email():
+    with pytest.raises(LMBTechError, match="LMBTECH_ACCOUNT_EMAIL"):
+        await _payout_client(email="").payout(**_payout_kwargs())
+
+
+def test_disbursement_request_mtn_only():
+    from app.schemas.payment import DisbursementCreate
+
+    ok = DisbursementCreate(amount_rwf=500, recipient_name="Aline", recipient_phone="0780000000", recipient_email="  ")
+    assert ok.recipient_phone == "+250780000000" and ok.recipient_email is None
+    with pytest.raises(ValidationError, match="MTN numbers only"):
+        DisbursementCreate(amount_rwf=500, recipient_name="Aline", recipient_phone="0721234567")
+
+
+async def test_payout_refused_when_integrator_balance_too_low():
+    from app.schemas.payment import DisbursementCreate
+    from app.services.payment_service import InsufficientBalanceError, PaymentService
+
+    class Repo:
+        created = False
+
+        async def get_by_reference(self, ref):
+            return None
+
+        async def integrator_balance(self, integrator_id):
+            return Decimal("500.00")
+
+        async def create(self, **kw):
+            Repo.created = True
+
+    class Settings_:
+        async def get_setting(self, key):
+            return None  # defaults: payout cost 5%, payout fee 6%
+
+    svc = PaymentService.__new__(PaymentService)
+    svc._repo, svc._integrator_repo, svc._settings = Repo(), Settings_(), None
+    from collections import defaultdict
+    import asyncio as _asyncio
+    svc._payout_locks = defaultdict(_asyncio.Lock)
+
+    body = DisbursementCreate(amount_rwf=500, recipient_name="Aline", recipient_phone="0780000000")
+    # 500 + 6% fee = 530 > 500 available -> refused before anything is written or sent.
+    with pytest.raises(InsufficientBalanceError) as exc:
+        await svc.create_disbursement(body, {"id": 1, "payout_fee_percentage": None})
+    assert exc.value.needed == Decimal("530.00")
+    assert Repo.created is False
+
+
 def test_unconfigured_client_refuses():
     client = LMBTechClient(Settings(lmbtech_app_key="", lmbtech_secret_key=""))
     assert client.configured is False

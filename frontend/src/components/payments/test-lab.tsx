@@ -25,14 +25,6 @@ const customer = { customer_name: "Test Customer", customer_email: "customer@exa
 
 const PAY_SCENARIOS: Scenario[] = [
   {
-    id: "momo",
-    title: "MTN MoMo",
-    what: "Prompt to the MTN test number",
-    channel: "MTN_MOMO",
-    expect: "pay",
-    body: { channel: "MTN_MOMO", amount_rwf: 100, ...customer, customer_phone: TEST_PHONE, description: "Lab: MTN MoMo" },
-  },
-  {
     id: "visa",
     title: "Visa",
     what: "Card payment via the secure page",
@@ -55,6 +47,14 @@ const PAY_SCENARIOS: Scenario[] = [
     channel: "OTHER_CARD",
     expect: "pay",
     body: { channel: "OTHER_CARD", amount_rwf: 100, ...customer, description: "Lab: Other card" },
+  },
+  {
+    id: "momo",
+    title: "MTN MoMo",
+    what: "Prompt to the MTN test number",
+    channel: "MTN_MOMO",
+    expect: "pay",
+    body: { channel: "MTN_MOMO", amount_rwf: 100, ...customer, customer_phone: TEST_PHONE, description: "Lab: MTN MoMo" },
   },
 ];
 

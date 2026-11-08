@@ -1,10 +1,6 @@
 import { apiClient } from "@/lib/axios";
 import { MOCK_MODE, simulateLatency } from "@/lib/mock";
-import {
-  generateIntegrators,
-  generateIntegratorSummaries,
-  MOCK_DDIN_COST_PERCENTAGE,
-} from "@/data/mock/generators";
+import { generateIntegrators } from "@/data/mock/generators";
 import { mockDocumentStore } from "@/data/mock/mock-document-store";
 import type {
   DocumentType,
@@ -16,7 +12,6 @@ import type {
 } from "@/types/api";
 
 let MOCK_INTEGRATORS = generateIntegrators();
-let MOCK_DDIN_COST = MOCK_DDIN_COST_PERCENTAGE;
 
 // snake_case <-> camelCase at the edge, matching app/schemas/integrator.py.
 function fromApi(row: {
@@ -60,21 +55,21 @@ function fromApi(row: {
 function summaryFromApi(row: {
   integrator_id: number;
   integrator_name: string;
-  current_fee_percentage: number;
   successful_transactions: number;
   total_collected_rwf: number;
+  total_disbursed_rwf: number;
   total_fee_charged_rwf: number;
-  total_ddin_cost_rwf: number;
+  total_gateway_cost_rwf: number;
   total_margin_rwf: number;
 }): IntegratorSummary {
   return {
     integratorId: row.integrator_id,
     integratorName: row.integrator_name,
-    currentFeePercentage: row.current_fee_percentage,
     successfulTransactions: row.successful_transactions,
     totalCollectedRwf: row.total_collected_rwf,
+    totalDisbursedRwf: row.total_disbursed_rwf,
     totalFeeChargedRwf: row.total_fee_charged_rwf,
-    totalDdinCostRwf: row.total_ddin_cost_rwf,
+    totalGatewayCostRwf: row.total_gateway_cost_rwf,
     totalMarginRwf: row.total_margin_rwf,
   };
 }
@@ -229,36 +224,10 @@ export const integratorsService = {
     return `${apiClient.defaults.baseURL ?? ""}/api/v1/admin/integrators/${integratorId}/documents/${documentType}`;
   },
 
-  /** GET /api/v1/admin/integrators/summary - collected/charged/cost/margin per integrator. */
+  /** GET /api/v1/admin/integrators/summary - collected / paid out / fees /
+   * LMBTech cost / margin per integrator, from the real ledger (no mock). */
   async summary(): Promise<IntegratorSummary[]> {
-    if (MOCK_MODE) {
-      await simulateLatency();
-      return generateIntegratorSummaries(MOCK_INTEGRATORS);
-    }
     const { data } = await apiClient.get("/api/v1/admin/integrators/summary");
     return (data as Parameters<typeof summaryFromApi>[0][]).map(summaryFromApi);
-  },
-
-  /** GET /api/v1/admin/settings/ddin-cost-percentage - what DDIN charges us. */
-  async getDdinCostPercentage(): Promise<number> {
-    if (MOCK_MODE) {
-      await simulateLatency(150, 300);
-      return MOCK_DDIN_COST;
-    }
-    const { data } = await apiClient.get("/api/v1/admin/settings/ddin-cost-percentage");
-    return data.ddin_cost_percentage;
-  },
-
-  /** PATCH /api/v1/admin/settings/ddin-cost-percentage */
-  async setDdinCostPercentage(value: number): Promise<number> {
-    if (MOCK_MODE) {
-      await simulateLatency(300, 600);
-      MOCK_DDIN_COST = value;
-      return MOCK_DDIN_COST;
-    }
-    const { data } = await apiClient.patch("/api/v1/admin/settings/ddin-cost-percentage", {
-      ddin_cost_percentage: value,
-    });
-    return data.ddin_cost_percentage;
   },
 };
