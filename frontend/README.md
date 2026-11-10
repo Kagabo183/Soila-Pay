@@ -121,11 +121,11 @@ viewer, plus one-click **Copy Request** and **Copy cURL**.
 
 ## Developer Portal
 
-`/developers` documents Authentication, the Collection API, the (placeholder)
-Disbursement API, Webhook Registration, webhook payload examples, and
-HMAC-SHA256 signature verification - including the four signature headers
-(`Content-Type`, `X-Moola-Event`, `X-Moola-Timestamp`, `X-Moola-Signature`), a
-syntax-highlighted Node.js `crypto.createHmac` example, and an interactive
+`/developers` (and `/portal/dev-tools` for integrators) documents
+Authentication, sandbox testing, collections (cards + MTN MoMo), payouts,
+webhooks and HMAC-SHA256 signature verification - the `X-Soila-Event`,
+`X-Soila-Signature` and `X-Soila-Delivery` headers, a Node.js
+`crypto.createHmac` example, and an interactive
 **Signature Verifier** that computes/checks HMAC-SHA256 entirely client-side
 via the Web Crypto API (`src/lib/hmac.ts`) - nothing pasted into that form
 ever leaves the browser.

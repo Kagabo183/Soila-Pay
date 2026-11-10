@@ -116,6 +116,10 @@ def main() -> int:
         # The SQL files hardcode `soila_pay`; honour a custom MYSQL_DB name.
         if db != "soila_pay":
             sql = re.sub(r"\bsoila_pay\b", db, sql)
+        if not admin_password:
+            # Hosted MySQL (cPanel): the database, user and grants were made in
+            # the control panel and the app user may not run these - skip them.
+            sql = re.sub(r"(?im)^\s*(CREATE\s+DATABASE|CREATE\s+USER|GRANT|FLUSH\s+PRIVILEGES)\b[^;]*;", "", sql)
         print(f"Applying {f.name} ...")
         with conn.cursor() as cur:
             cur.execute(f"USE `{db}`")

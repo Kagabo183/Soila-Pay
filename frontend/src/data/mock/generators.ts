@@ -286,8 +286,7 @@ const INTEGRATOR_NAMES = [
   "Byiringiro Enterprises",
 ];
 
-// DDIN's cost to us, mirrored from the default seeded in
-// db_init/002_integrators_and_fees.sql (platform_settings.ddin_cost_percentage).
+// Sample integrators for mock mode.
 export function generateIntegrators(count = 4): Integrator[] {
   const productionStatuses: Integrator["productionStatus"][] = [
     "APPROVED", "PENDING_REVIEW", "NOT_SUBMITTED", "REJECTED",

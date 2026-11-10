@@ -303,7 +303,7 @@ export interface ApiIntegrationSettings {
 
 // ---------------------------------------------------------------------------
 // Integrators & margin (our own aggregator clients, and what we charge them
-// on top of DDIN's cost) - shaped to match app/schemas/integrator.py and the
+// on top of LMBTech's cost) - shaped to match app/schemas/integrator.py and the
 // GET/POST/PATCH /api/v1/admin/integrators endpoints.
 // ---------------------------------------------------------------------------
 

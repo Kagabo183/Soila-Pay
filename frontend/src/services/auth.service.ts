@@ -68,7 +68,7 @@ export const authService = {
       const tokens = issueMockTokens();
       // Best-effort: also obtain a REAL admin session token from the
       // middleware using the same credentials, so pages that always call the
-      // real API regardless of mock mode (e.g. DDIN Diagnostics) still work.
+      // real API regardless of mock mode still work.
       // Falls back to the mock-only token if the backend is unreachable or
       // ADMIN_USERNAME/PASSWORD doesn't match - the mock console must not
       // depend on the backend being up.

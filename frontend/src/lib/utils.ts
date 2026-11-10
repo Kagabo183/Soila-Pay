@@ -17,7 +17,7 @@ export function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-// Soila Pay and DDIN both operate in Rwanda - every timestamp display should
+// Soila Pay operates in Rwanda - every timestamp display should
 // read in Rwanda's own time (CAT, UTC+2, no DST) regardless of the viewing
 // browser's OS timezone, rather than silently drifting per-viewer.
 export const RWANDA_TIME_ZONE = "Africa/Kigali";
