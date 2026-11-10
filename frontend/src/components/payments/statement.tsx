@@ -58,12 +58,15 @@ export function PaymentsStatement({
   title,
   subtitle,
   children,
+  reloadToken = 0,
 }: {
   scope: PaymentScope;
   title: string;
   subtitle: string;
   /** Extra panels shown above the ledger (e.g. admin's Match with LMBTech). */
   children?: React.ReactNode;
+  /** Bump to reload totals + ledger without remounting (children keep their state). */
+  reloadToken?: number;
 }) {
   const admin = scope.kind === "admin";
   const token = scope.kind === "portal" ? scope.token : null;
@@ -74,7 +77,8 @@ export function PaymentsStatement({
   const [draft, setDraft] = React.useState(initial);
   const [applied, setApplied] = React.useState(initial);
   const [summary, setSummary] = React.useState<PeriodSummary | null>(null);
-  const [refreshKey, setRefreshKey] = React.useState(0);
+  const [innerKey, setRefreshKey] = React.useState(0);
+  const refreshKey = innerKey + reloadToken;
   const [cashout, setCashout] = React.useState<"MOMO" | "BANK" | null>(null);
 
   React.useEffect(() => {

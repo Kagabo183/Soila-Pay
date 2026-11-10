@@ -5,16 +5,18 @@ import { PaymentsStatement } from "@/components/payments/statement";
 import { ReconcilePanel } from "@/components/payments/reconcile-panel";
 
 export default function TransactionsPage() {
-  // Bumping the key remounts the statement so totals + ledger reload after a reconcile/import.
-  const [key, setKey] = React.useState(0);
+  // Bumping the token reloads totals + ledger after a reconcile/import. It must not
+  // remount the statement: that would also remount ReconcilePanel and wipe its
+  // "Checked N · corrected M" report the moment something was corrected.
+  const [reload, setReload] = React.useState(0);
   return (
     <PaymentsStatement
-      key={key}
+      reloadToken={reload}
       scope={{ kind: "admin" }}
       title="Transactions"
       subtitle="Every collection, payout and cash-out across all integrators - with the fee charged, LMBTech's cost and your margin."
     >
-      <ReconcilePanel onChanged={() => setKey((k) => k + 1)} />
+      <ReconcilePanel onChanged={() => setReload((k) => k + 1)} />
     </PaymentsStatement>
   );
 }

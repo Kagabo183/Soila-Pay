@@ -55,7 +55,11 @@ export default function IntegratorsPage() {
     setDocumentsByIntegrator(Object.fromEntries(entries));
   }
 
+  // Bumped on every refresh so "Fees per integrator" picks up added/edited integrators.
+  const [pricingReload, setPricingReload] = React.useState(0);
+
   async function refresh() {
+    setPricingReload((k) => k + 1);
     setLoading(true);
     const [integratorList, summaryList] = await Promise.all([integratorsService.list(), integratorsService.summary()]);
     setIntegrators(integratorList);
@@ -399,7 +403,7 @@ export default function IntegratorsPage() {
       </Card>
 
       <div id="pricing" className="scroll-mt-4">
-        <PricingPanel onSaved={refresh} />
+        <PricingPanel onSaved={refresh} reloadToken={pricingReload} />
       </div>
 
       <Card>

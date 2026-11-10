@@ -34,7 +34,7 @@ function Example({ label, fee, cost }: { label: string; fee: number; cost: numbe
 /** Admin: what LMBTech takes on collections and payouts, the default fees
  * integrators pay, and per-integrator overrides. The server refuses any fee
  * below LMBTech's cost, so a typo here can't make transactions lose money. */
-export function PricingPanel({ onSaved }: { onSaved?: () => void }) {
+export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => void; /** bump to reload (e.g. after an integrator is added) */ reloadToken?: number }) {
   const [pricing, setPricing] = React.useState<PaymentPricing | null>(null);
   const [form, setForm] = React.useState({ cost: "", fee: "", payoutCost: "", payoutFee: "" });
   const [saving, setSaving] = React.useState(false);
@@ -70,7 +70,7 @@ export function PricingPanel({ onSaved }: { onSaved?: () => void }) {
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, [load]);
+  }, [load, reloadToken]);
 
   const feeError = form.fee && num(form.fee) < num(form.cost) ? `Must be at least ${num(form.cost)}%` : null;
   const payoutError = form.payoutFee && num(form.payoutFee) < num(form.payoutCost) ? `Must be at least ${num(form.payoutCost)}%` : null;
