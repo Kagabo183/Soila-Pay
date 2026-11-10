@@ -226,32 +226,59 @@ async def download_own_document(
     )
 
 
+async def _go_live_checklist(request: Request, integrator: dict) -> dict:
+    """What an integrator must finish before its live key works. The sandbox
+    items prove the integration end to end (card redirect + MoMo approval +
+    status/webhook handling) before any real customer pays."""
+    tested = await request.app.state.payment_repo.sandbox_successes(integrator["id"])
+    docs = request.app.state.integrator_document_repo
+    has_docs = await docs.has_all_required(integrator["id"])
+    items = [
+        {"key": "sandbox_card", "label": "A successful test card payment in the sandbox", "done": tested["CARD"] > 0},
+        {"key": "sandbox_momo", "label": "A successful test MTN MoMo payment in the sandbox", "done": tested["MOMO"] > 0},
+        {"key": "documents", "label": "Tax clearance and RDB certificates uploaded", "done": has_docs},
+    ]
+    return {
+        "items": items,
+        "ready": all(i["done"] for i in items),
+        "auto_go_live": request.app.state.settings.integrator_auto_go_live,
+    }
+
+
+@router.get("/production/checklist")
+async def production_checklist(request: Request, integrator: dict = Depends(_current_integrator)):
+    return await _go_live_checklist(request, integrator)
+
+
 @router.post("/production/submit", response_model=IntegratorOut)
 async def submit_production_kyc(
     body: ProductionKycSubmitRequest,
     request: Request,
     integrator: dict = Depends(_current_integrator),
 ):
+    """Go live. With INTEGRATOR_AUTO_GO_LIVE (default) an integrator whose
+    checklist is complete is switched to Production at once - like LMBTech,
+    no waiting. Otherwise it's queued for an admin to review."""
+    checklist = await _go_live_checklist(request, integrator)
+    if not checklist["ready"]:
+        missing = "; ".join(i["label"] for i in checklist["items"] if not i["done"])
+        raise HTTPException(status_code=400, detail=f"Not ready to go live yet - still needed: {missing}")
     document_repo = request.app.state.integrator_document_repo
-    if not await document_repo.has_all_required(integrator["id"]):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Upload both a tax clearance certificate and an RDB certificate "
-                "(POST /production/documents) before submitting for review"
-            ),
-        )
     tax_doc = await document_repo.get(integrator["id"], "TAX_CLEARANCE")
     rdb_doc = await document_repo.get(integrator["id"], "RDB_CERTIFICATE")
 
     repo = request.app.state.integrator_repo
-    return await repo.submit_production_kyc(
+    row = await repo.submit_production_kyc(
         integrator["id"],
         business_location=body.business_location,
         tax_clearance_file_name=tax_doc["file_name"],
         rdb_certificate_file_name=rdb_doc["file_name"],
         ip_whitelist=body.ip_whitelist,
     )
+    if checklist["auto_go_live"]:
+        row = await repo.approve_production(integrator["id"])
+        logger.info("integrator_auto_go_live", extra={"integrator_id": integrator["id"]})
+    return row
 
 
 # Transaction history now lives in the LMBTech ledger:

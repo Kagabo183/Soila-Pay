@@ -422,25 +422,40 @@ export const paymentService = {
     return fromApi(data);
   },
 
+  /** Sandbox card page only: approve or cancel a simulated card payment.
+   * The server refuses anything that isn't a pending sandbox card row. */
+  async completeSandboxCard(referenceId: string, approve: boolean, cardNumber?: string): Promise<PublicPayment> {
+    const { data } = await apiClient.post(`/api/v1/payments/sandbox/${encodeURIComponent(referenceId)}/complete`, {
+      approve,
+      card_number: cardNumber || null,
+    });
+    return toPublic(data);
+  },
+
   /** No login needed - the receipt page a card payer returns to. */
   async getPublic(referenceId: string): Promise<PublicPayment> {
     const { data } = await apiClient.get(`/api/v1/payments/public/${encodeURIComponent(referenceId)}`);
-    return {
-      referenceId: data.reference_id,
-      status: data.status,
-      statusMessage: data.status_message,
-      method: data.method,
-      channel: data.channel,
-      amountRwf: data.amount_rwf,
-      customerName: data.customer_name,
-      description: data.description,
-      isTest: data.is_test,
-      createdAt: data.created_at,
-      completedAt: data.completed_at,
-      returnUrl: data.return_url,
-    };
+    return toPublic(data);
   },
 };
+
+/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+function toPublic(data: any): PublicPayment {
+  return {
+    referenceId: data.reference_id,
+    status: data.status,
+    statusMessage: data.status_message,
+    method: data.method,
+    channel: data.channel,
+    amountRwf: data.amount_rwf,
+    customerName: data.customer_name,
+    description: data.description,
+    isTest: data.is_test,
+    createdAt: data.created_at,
+    completedAt: data.completed_at,
+    returnUrl: data.return_url,
+  };
+}
 
 /** The exact JSON body an integrator sends to POST /api/v1/payments. */
 export function toApiBody(payload: PaymentCreatePayload) {

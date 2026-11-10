@@ -22,8 +22,12 @@ def _where(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     cashout: Optional[bool] = None,
+    is_test: Optional[bool] = None,
 ) -> tuple[str, list]:
     clauses, args = [], []
+    if is_test is not None:  # test and real money are separate ledgers
+        clauses.append("p.is_test = %s")
+        args.append(int(is_test))
     if date_from is not None:
         clauses.append("p.created_at >= %s")
         args.append(datetime.combine(date_from, datetime.min.time()))
@@ -112,6 +116,18 @@ class PaymentRepo:
                     (reference_id,),
                 )
                 return await cur.fetchone()
+
+    async def set_pending_details(self, reference_id: str, *, status_message: str, redirect_url: Optional[str]) -> None:
+        """Message + card page for a row that's still PENDING (sandbox rows,
+        which never get a gateway response to carry them)."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "UPDATE payments SET status_message = %s, redirect_url = COALESCE(%s, redirect_url) "
+                    "WHERE reference_id = %s AND status = 'PENDING'",
+                    (status_message[:255], redirect_url, reference_id),
+                )
+                await conn.commit()
 
     async def update_gateway_state(
         self,
@@ -233,8 +249,8 @@ class PaymentRepo:
         async with self._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT reference_id FROM payments WHERE status = 'FAILED' AND created_at >= %s "
-                    "AND reconciled_at IS NULL ORDER BY created_at DESC LIMIT 100",
+                    "SELECT reference_id FROM payments WHERE status = 'FAILED' AND gateway = 'LMBTECH' "
+                    "AND created_at >= %s AND reconciled_at IS NULL ORDER BY created_at DESC LIMIT 100",
                     (since,),
                 )
                 return [row[0] for row in await cur.fetchall()]
@@ -274,10 +290,10 @@ class PaymentRepo:
                 rows = await cur.fetchall()
         return list(rows), int(total)
 
-    async def summary(self, integrator_id: Optional[int] = None, direction: Optional[str] = None) -> dict:
+    async def summary(self, integrator_id: Optional[int] = None, direction: Optional[str] = None, *, is_test: Optional[bool] = None) -> dict:
         """Totals for one integrator (or everyone). Money sums count SUCCESS
         only; the counts follow `direction` if given."""
-        clause, args = _where(integrator_id=integrator_id)
+        clause, args = _where(integrator_id=integrator_id, is_test=is_test)
         dir_filter = "AND p.direction = %s" if direction else ""
         count_args = [direction] * 4 if direction else []
         async with self._pool.acquire() as conn:
@@ -302,10 +318,14 @@ class PaymentRepo:
                 )
                 return await cur.fetchone()
 
-    async def integrator_balance(self, integrator_id: int) -> Decimal:
+    async def integrator_balance(self, integrator_id: int, *, is_test: bool = False) -> Decimal:
         """What the integrator can still pay out: successful collections minus
         their fees, minus every payout that isn't failed (pending ones too,
-        so in-flight payouts can't be spent twice) plus its fee."""
+        so in-flight payouts can't be spent twice) plus its fee.
+
+        Test and real money are separate ledgers: a live payout can only spend
+        money from real (is_test=0) collections, so simulated sandbox/test
+        payments can never be cashed out as real MoMo money."""
         async with self._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -315,18 +335,18 @@ class PaymentRepo:
                                         THEN amount_rwf - COALESCE(fee_amount_rwf, 0) END), 0)
                     - COALESCE(SUM(CASE WHEN direction='DISBURSEMENT' AND status IN ('SUCCESS','PENDING')
                                         THEN amount_rwf + COALESCE(fee_amount_rwf, 0) END), 0)
-                    FROM payments WHERE integrator_id = %s
+                    FROM payments WHERE integrator_id = %s AND is_test = %s
                     """,
-                    (integrator_id,),
+                    (integrator_id, int(is_test)),
                 )
                 (value,) = await cur.fetchone()
         return Decimal(value or 0).quantize(Decimal("0.01"))
 
-    async def overview(self, days: int, integrator_id: Optional[int] = None) -> dict:
+    async def overview(self, days: int, integrator_id: Optional[int] = None, *, is_test: Optional[bool] = None) -> dict:
         """Dashboard data: per-day series (last `days` days, gaps filled with
         zeros), today's totals, and the collection channel split."""
         since = date.today() - timedelta(days=days - 1)
-        clause, args = _where(integrator_id=integrator_id)
+        clause, args = _where(integrator_id=integrator_id, is_test=is_test)
         extra = (" AND " + clause[len("WHERE "):]) if clause else ""
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -406,25 +426,39 @@ class PaymentRepo:
                 return list(await cur.fetchall())
 
     async def list_pending_references(self, max_age_hours: int) -> list[str]:
-        """Pending LMBTech rows to poll. Bank cash-outs are excluded - they're
-        settled by an admin, LMBTech never sees them."""
+        """Pending rows to poll: LMBTech ones (asks the gateway) and sandbox
+        ones (resolved by Soila Pay's simulator). Live bank cash-outs are
+        excluded - they're settled by an admin, LMBTech never sees them."""
         since = datetime.now() - timedelta(hours=max_age_hours)
         async with self._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT reference_id FROM payments WHERE status = 'PENDING' AND gateway = 'LMBTECH' "
+                    "SELECT reference_id FROM payments WHERE status = 'PENDING' AND gateway IN ('LMBTECH', 'SANDBOX') "
                     "AND created_at >= %s ORDER BY created_at DESC LIMIT 200",
                     (since,),
                 )
                 return [row[0] for row in await cur.fetchall()]
 
+    async def sandbox_successes(self, integrator_id: int) -> dict:
+        """Successful sandbox collections by method - the go-live checklist's
+        proof that the integration really works end to end."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT method, COUNT(*) FROM payments WHERE integrator_id = %s AND gateway = 'SANDBOX' "
+                    "AND direction = 'COLLECTION' AND status = 'SUCCESS' GROUP BY method",
+                    (integrator_id,),
+                )
+                counts = {m: int(n) for m, n in await cur.fetchall()}
+        return {"CARD": counts.get("CARD", 0), "MOMO": counts.get("MOMO", 0)}
+
     async def range_totals(
-        self, integrator_id: Optional[int], date_from: Optional[date], date_to: Optional[date]
+        self, integrator_id: Optional[int], date_from: Optional[date], date_to: Optional[date], *, is_test: Optional[bool] = None
     ) -> dict:
         """LMBTech-style period totals. Net = successful collections minus
         their fees. Withdrawn = payouts/cash-outs that aren't failed (pending
         ones reserve money) plus their fees."""
-        clause, args = _where(integrator_id=integrator_id, date_from=date_from, date_to=date_to)
+        clause, args = _where(integrator_id=integrator_id, date_from=date_from, date_to=date_to, is_test=is_test)
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(

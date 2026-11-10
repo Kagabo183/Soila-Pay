@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # Stop polling a payment that's still PENDING after this long.
     payment_reconciliation_max_age_hours: int = 24
 
+    # Go live without waiting for an admin: once an integrator has passed its
+    # sandbox tests (a successful test card + test MoMo payment) and uploaded
+    # its documents, "Go live" switches it to Production and issues its live
+    # key at once. False = the old manual review (admin approves). Admins can
+    # always revoke an account later.
+    integrator_auto_go_live: bool = True
+
     # Integrator self-service portal (signup/login session tokens - see
     # app/services/integrator_auth.py). MUST be overridden in .env for any
     # shared/production deployment - main.py warns loudly if it isn't.

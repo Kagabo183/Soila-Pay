@@ -11,6 +11,10 @@ Plus the public pieces a customer's browser / the gateway needs:
   - GET  /api/v1/payments/public/{ref}       receipt page after a card payment
   - POST /api/v1/payments/callback/lmbtech   gateway notification (untrusted -
                                              only triggers a re-check)
+  - POST /api/v1/payments/sandbox/{ref}/complete  sandbox card page's Pay /
+                                             Cancel (SANDBOX rows only)
+Sandbox keys / Test Mode accounts are simulated by Soila Pay and never reach
+LMBTech - see app/services/sandbox.py.
 """
 import json
 import logging
@@ -19,6 +23,7 @@ from decimal import Decimal
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from app.api.v1.deps import require_admin
 from app.api.v1.integrator_portal import _current_integrator
@@ -116,7 +121,8 @@ def _service(request: Request) -> PaymentService:
 
 async def _create(request: Request, body: PaymentCreate, integrator: Optional[dict], *, admin: bool = False) -> PaymentOut:
     service = _service(request)
-    if not service.gateway_configured:
+    # Sandbox is simulated by Soila Pay and works without LMBTech.
+    if not service.gateway_configured and not service.is_sandbox(integrator):
         raise HTTPException(status_code=503, detail="Payments are not set up yet - add the LMBTech keys in .env")
     try:
         row = await service.create(body, integrator)
@@ -129,7 +135,7 @@ async def _create_disbursement(
     request: Request, body: DisbursementCreate, integrator: Optional[dict], *, admin: bool = False
 ) -> PaymentOut:
     service = _service(request)
-    if not service.payouts_configured:
+    if not service.payouts_configured and not service.is_sandbox(integrator):
         raise HTTPException(
             status_code=503,
             detail="Payouts are not set up yet - add LMBTECH_ACCOUNT_EMAIL (and the LMBTech keys) in .env",
@@ -177,11 +183,18 @@ async def _list(
     )
 
 
+def _mode_is_test(request: Request, integrator: Optional[dict]) -> bool:
+    """Which ledger totals show: the integrator's current mode (sandbox money
+    while testing, real money once live); real money for the admin console
+    (unless the whole gateway is in LMBTech test mode)."""
+    return _service(request).is_test_for(PaymentService.is_sandbox(integrator))
+
+
 async def _summary(request: Request, integrator: Optional[dict], direction: Optional[str] = None) -> PaymentSummary:
     """integrator=None -> admin view across everyone, with cost + margin."""
     service = _service(request)
     repo = request.app.state.payment_repo
-    row = await repo.summary(integrator["id"] if integrator else None, direction)
+    row = await repo.summary(integrator["id"] if integrator else None, direction, is_test=_mode_is_test(request, integrator))
     pricing = await service.pricing()
     summary = PaymentSummary(
         collected_rwf=float(row["collected_rwf"]),
@@ -195,12 +208,12 @@ async def _summary(request: Request, integrator: Optional[dict], direction: Opti
         total_count=int(row["total_count"]),
         gateway_configured=service.gateway_configured,
         payouts_configured=service.payouts_configured,
-        test_mode=request.app.state.settings.lmbtech_test_mode,
+        test_mode=_mode_is_test(request, integrator),
     )
     if integrator is not None:
         summary.fee_percentage = float(service.fee_for(integrator, pricing))
         summary.payout_fee_percentage = float(service.fee_for(integrator, pricing, DISBURSEMENT))
-        summary.available_balance_rwf = float(await service.available_balance(integrator["id"]))
+        summary.available_balance_rwf = float(await service.available_balance(integrator))
     else:
         summary.gateway_cost_percentage = float(pricing.gateway_cost_percentage)
         summary.payout_cost_percentage = float(pricing.payout_cost_percentage)
@@ -212,12 +225,12 @@ async def _summary(request: Request, integrator: Optional[dict], direction: Opti
 
 async def _period(request: Request, integrator: Optional[dict], date_from: Optional[date], date_to: Optional[date]) -> PeriodSummary:
     repo = request.app.state.payment_repo
-    t = await repo.range_totals(integrator["id"] if integrator else None, date_from, date_to)
+    t = await repo.range_totals(integrator["id"] if integrator else None, date_from, date_to, is_test=_mode_is_test(request, integrator))
     net, withdrawn = float(t["net_rwf"]), float(t["withdrawn_rwf"])
     return PeriodSummary(
         date_from=date_from.isoformat() if date_from else None,
         date_to=date_to.isoformat() if date_to else None,
-        available_balance_rwf=float(await _service(request).available_balance(integrator["id"])) if integrator else None,
+        available_balance_rwf=float(await _service(request).available_balance(integrator)) if integrator else None,
         gross_rwf=float(t["gross_rwf"]),
         net_rwf=net,
         withdrawn_rwf=withdrawn,
@@ -230,7 +243,7 @@ async def _period(request: Request, integrator: Optional[dict], date_from: Optio
 async def _overview(request: Request, integrator: Optional[dict], days: int) -> Overview:
     repo = request.app.state.payment_repo
     integrator_id = integrator["id"] if integrator else None
-    data = await repo.overview(days, integrator_id)
+    data = await repo.overview(days, integrator_id, is_test=_mode_is_test(request, integrator))
     today = data["today"]
     finished = int(today["success"]) + int(today["failed"])
     rows, _ = await repo.list_paginated(1, 8, integrator_id=integrator_id)
@@ -295,8 +308,14 @@ async def _integrator_from_key(
     if integrator.get("key_mode") == "production" and integrator.get("account_mode") != "PRODUCTION":
         raise HTTPException(
             status_code=403,
-            detail="Your account is in Test Mode - use your sandbox key, or ask Soila Pay to switch you to Production",
+            detail="Your account is in Test Mode - use your sandbox key, or finish the Go live checklist in the portal",
         )
+    # The live key only works from the integrator's own servers, if they
+    # listed any at go-live. Sandbox keys stay usable from anywhere.
+    allowed = {ip.strip() for ip in (integrator.get("ip_whitelist") or "").replace(";", ",").split(",") if ip.strip()}
+    client_ip = request.client.host if request.client else None
+    if integrator.get("key_mode") == "production" and allowed and client_ip not in allowed:
+        raise HTTPException(status_code=403, detail=f"This production key can't be used from {client_ip} - it isn't in your IP whitelist")
     return integrator
 
 
@@ -331,6 +350,22 @@ async def public_payment(reference_id: str, request: Request):
         completed_at=_iso(row.get("completed_at")),
         return_url=row.get("return_url"),
     )
+
+
+class SandboxCardSubmit(BaseModel):
+    approve: bool = True
+    card_number: Optional[str] = Field(default=None, max_length=32)
+
+
+@router.post("/sandbox/{reference_id}/complete", response_model=PublicPaymentOut)
+async def sandbox_card_complete(reference_id: str, body: SandboxCardSubmit, request: Request):
+    """Soila Pay's sandbox card page. Only works on sandbox card payments -
+    a live payment can never be completed through here (404). References
+    are random and unguessable, like the public receipt."""
+    row = await _service(request).complete_sandbox_card(reference_id, approve=body.approve, card_number=body.card_number)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Sandbox payment not found")
+    return await public_payment(reference_id, request)
 
 
 @router.api_route("/callback/lmbtech", methods=["POST", "GET"])
@@ -390,7 +425,7 @@ async def api_create_disbursement(
 
 @disbursement_router.get("/balance")
 async def api_balance(request: Request, integrator: dict = Depends(_integrator_from_key)):
-    balance = await _service(request).available_balance(integrator["id"])
+    balance = await _service(request).available_balance(integrator)
     return {"available_balance_rwf": float(balance)}
 
 
@@ -429,7 +464,7 @@ async def portal_cashout(body: CashoutRequest, request: Request, integrator: dic
     """Withdraw your own balance: to your MTN MoMo number (instant, payout fee)
     or to your bank account (Soila Pay sends the transfer)."""
     service = _service(request)
-    if body.destination == "MOMO" and not service.payouts_configured:
+    if body.destination == "MOMO" and not service.payouts_configured and not service.is_sandbox(integrator):
         raise HTTPException(status_code=503, detail="MoMo cash-outs are not available yet")
     try:
         row = await service.cashout(integrator, body.destination, body.amount_rwf)

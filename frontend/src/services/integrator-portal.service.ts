@@ -16,6 +16,13 @@ import type {
   ProductionKycPayload,
 } from "@/types/api";
 
+export interface GoLiveChecklist {
+  items: { key: string; label: string; done: boolean }[];
+  ready: boolean;
+  /** true: "Go live" switches the account to Production at once. */
+  autoGoLive: boolean;
+}
+
 
 function documentFromApi(row: {
   document_type: DocumentType;
@@ -303,8 +310,18 @@ export const integratorPortalService = {
     });
   },
 
+  /** GET /api/v1/integrator-portal/production/checklist - what's left before
+   * going live (sandbox card + MoMo tested, documents uploaded). */
+  async getGoLiveChecklist(token: string): Promise<GoLiveChecklist> {
+    const { data } = await apiClient.get("/api/v1/integrator-portal/production/checklist", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return { items: data.items, ready: data.ready, autoGoLive: data.auto_go_live };
+  },
+
   /** POST /api/v1/integrator-portal/production/submit - Bearer <session token>.
-   * Requires both TAX_CLEARANCE and RDB_CERTIFICATE already uploaded. */
+   * Requires the go-live checklist to be complete. With auto go-live (the
+   * default) the account is switched to Production immediately. */
   async submitProductionKyc(token: string, payload: ProductionKycPayload): Promise<Integrator> {
     if (MOCK_MODE) {
       await simulateLatency(500, 900);

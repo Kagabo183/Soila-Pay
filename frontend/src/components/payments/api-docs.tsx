@@ -51,6 +51,7 @@ function Endpoint({ method, path, children }: { method: "GET" | "POST"; path: st
 
 const SECTIONS = [
   { id: "auth", label: "Authentication" },
+  { id: "sandbox", label: "Sandbox testing" },
   { id: "collect", label: "Collect (cards, MoMo)" },
   { id: "status", label: "Check status" },
   { id: "payout", label: "Pay out" },
@@ -85,7 +86,7 @@ export function ApiDocs({ integratorKey }: { integratorKey?: string }) {
   "amount_rwf": 10000.0,
   "fee_percentage": 6.0,
   "fee_amount_rwf": 600.0,
-  "redirect_url": "https://pay.lmbtech.rw/pay/pesapal/iframe.php?reference_id=…",
+  "redirect_url": "https://pay.pesapal.com/iframe/PesapalIframe3/Index?OrderTrackingId=…",
   "is_test": true,
   ...
 }`;
@@ -162,8 +163,9 @@ function isFromSoilaPay(rawBody, signatureHeader, secret) {
         <div id="auth" className="scroll-mt-4">
           <BkPanel title="1 · Authentication" tone="bk-fill-yellow">
             <p className="text-sm">
-              Send your key in the <code className="font-mono font-bold">Integrator-Key</code> header on every request. Use the{" "}
-              <b>sandbox key</b> while testing; you get a <b>production key</b> after “Go Live” approval.
+              Send your key in the <code className="font-mono font-bold">Integrator-Key</code> header on every request. The <b>sandbox key</b> is
+              for testing - nothing real is ever charged or paid out. Once your sandbox tests pass, press <b>Go live</b> in the portal and your{" "}
+              <b>production key</b> works at once for real money. Same API, same URLs - only the key changes.
             </p>
             {integratorKey ? (
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -173,6 +175,52 @@ function isFromSoilaPay(rawBody, signatureHeader, secret) {
             ) : (
               <p className="bk-muted mt-2 text-xs">Each integrator finds their key in their portal.</p>
             )}
+          </BkPanel>
+        </div>
+
+        <div id="sandbox" className="scroll-mt-4">
+          <BkPanel title="2 · Sandbox testing" tone="bk-fill-green">
+            <p className="text-sm">
+              With the sandbox key, Soila Pay simulates every payment: no card is charged, no MoMo wallet is touched. You get the same responses,
+              statuses and webhooks as live (with <code className="font-mono">&quot;is_test&quot;: true</code>), and a separate test balance that can
+              never be cashed out as real money.
+            </p>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <table className="w-full text-sm">
+                <caption className="bk-display mb-1 text-left text-xs font-bold uppercase">MTN MoMo (collections &amp; payouts)</caption>
+                <tbody>
+                  {[
+                    ["0780000002", "FAILED - customer declined / wallet unavailable"],
+                    ["0780000003", "FAILED - insufficient funds"],
+                    ["any other 078/079", "SUCCESS about 5 seconds later"],
+                  ].map(([n, d]) => (
+                    <tr key={n} className="border-b border-[var(--bk-ink)]/20 last:border-0">
+                      <td className="py-2 pr-3 font-mono text-xs font-bold">{n}</td>
+                      <td className="py-2">{d}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <table className="w-full text-sm">
+                <caption className="bk-display mb-1 text-left text-xs font-bold uppercase">Cards (on the sandbox card page)</caption>
+                <tbody>
+                  {[
+                    ["4242 4242 4242 4242", "SUCCESS"],
+                    ["4000 0000 0000 0002", "FAILED - declined by the bank"],
+                    ["Cancel button", "CANCELLED"],
+                  ].map(([n, d]) => (
+                    <tr key={n} className="border-b border-[var(--bk-ink)]/20 last:border-0">
+                      <td className="py-2 pr-3 font-mono text-xs font-bold">{n}</td>
+                      <td className="py-2">{d}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="bk-muted mt-3 text-xs">
+              To go live, the portal checklist needs one successful sandbox card payment and one successful sandbox MoMo payment, plus your tax
+              clearance and RDB certificates. Then “Go live” switches you to real money instantly.
+            </p>
           </BkPanel>
         </div>
 
@@ -231,7 +279,8 @@ function isFromSoilaPay(rawBody, signatureHeader, secret) {
               Register a URL in the portal (Webhooks) to be told the moment something finishes:{" "}
               <code className="font-mono">payment.success</code>, <code className="font-mono">payment.failed</code>,{" "}
               <code className="font-mono">disbursement.success</code>, <code className="font-mono">disbursement.failed</code>. Always check the signature
-              before trusting a webhook.
+              before trusting a webhook. Answer with any <b>2xx</b> - otherwise we retry up to 5 times over about 3 minutes. Each event carries the same{" "}
+              <code className="font-mono">X-Soila-Delivery</code> id on every retry, so you can safely ignore duplicates.
             </p>
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <Code title="What we send" code={webhookBody} />
@@ -264,7 +313,7 @@ function isFromSoilaPay(rawBody, signatureHeader, secret) {
                   {[
                     ["401", "Missing or wrong Integrator-Key"],
                     ["402", "Payout larger than your available balance"],
-                    ["403", "Integrator account disabled"],
+                    ["403", "Account disabled, production key used in Test Mode, or request from an IP not in your whitelist"],
                     ["404", "Unknown reference (or not yours)"],
                     ["409", "reference_id already used"],
                     ["422", "Invalid input - the message says what to fix"],

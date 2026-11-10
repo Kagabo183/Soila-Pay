@@ -298,7 +298,7 @@ async def test_payout_refused_when_integrator_balance_too_low():
         async def get_by_reference(self, ref):
             return None
 
-        async def integrator_balance(self, integrator_id):
+        async def integrator_balance(self, integrator_id, is_test=False):
             return Decimal("500.00")
 
         async def create(self, **kw):
@@ -309,7 +309,7 @@ async def test_payout_refused_when_integrator_balance_too_low():
             return None  # defaults: payout cost 5%, payout fee 6%
 
     svc = PaymentService.__new__(PaymentService)
-    svc._repo, svc._integrator_repo, svc._settings = Repo(), Settings_(), None
+    svc._repo, svc._integrator_repo, svc._settings = Repo(), Settings_(), Settings(lmbtech_test_mode=False)
     from collections import defaultdict
     import asyncio as _asyncio
     svc._payout_locks = defaultdict(_asyncio.Lock)
@@ -317,7 +317,7 @@ async def test_payout_refused_when_integrator_balance_too_low():
     body = DisbursementCreate(amount_rwf=500, recipient_name="Aline", recipient_phone="0780000000")
     # 500 + 6% fee = 530 > 500 available -> refused before anything is written or sent.
     with pytest.raises(InsufficientBalanceError) as exc:
-        await svc.create_disbursement(body, {"id": 1, "payout_fee_percentage": None})
+        await svc.create_disbursement(body, {"id": 1, "payout_fee_percentage": None, "account_mode": "PRODUCTION"})
     assert exc.value.needed == Decimal("530.00")
     assert Repo.created is False
 
@@ -332,8 +332,10 @@ def _cashout_service(balance="1000.00"):
 
     class Repo:
         created: list = []
+        balance_asked: list = []
 
-        async def integrator_balance(self, integrator_id):
+        async def integrator_balance(self, integrator_id, is_test=False):
+            Repo.balance_asked.append(is_test)
             return Decimal(balance)
 
         async def create(self, **kw):
@@ -342,13 +344,17 @@ def _cashout_service(balance="1000.00"):
         async def update_gateway_state(self, *a, **kw):
             return False
 
+        async def set_pending_details(self, *a, **kw):
+            return None
+
         async def get_by_reference(self, ref):
             return {"reference_id": ref, "status": "PENDING"}
 
     svc = PaymentService.__new__(PaymentService)
-    svc._repo, svc._settings = Repo(), Settings()
+    svc._repo, svc._settings = Repo(), Settings(lmbtech_test_mode=False)
     svc._payout_locks = defaultdict(_asyncio.Lock)
     Repo.created = []
+    Repo.balance_asked = []
     return svc, Repo
 
 
@@ -374,7 +380,7 @@ async def test_bank_cashout_reserves_balance_and_refuses_overdraw():
     from app.services.payment_service import InsufficientBalanceError
 
     svc, Repo = _cashout_service(balance="1000.00")
-    integ = {"id": 1, "name": "Shop", "bank_name": "BK", "bank_account": "123", "email": "s@x.rw"}
+    integ = {"id": 1, "name": "Shop", "bank_name": "BK", "bank_account": "123", "email": "s@x.rw", "account_mode": "PRODUCTION"}
     with pytest.raises(InsufficientBalanceError):
         await svc.cashout(integ, "BANK", 1500)
     assert Repo.created == []

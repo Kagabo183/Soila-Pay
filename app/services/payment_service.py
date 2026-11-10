@@ -30,8 +30,8 @@ from app.db.integrator_repo import IntegratorRepo
 from app.db.integrator_webhook_repo import IntegratorWebhookRepo
 from app.db.payment_repo import TERMINAL_STATUSES, PaymentRepo
 from app.schemas.payment import CARD_CHANNELS, DisbursementCreate, PaymentCreate
-from app.services import webhook_dispatcher
-from app.services.lmbtech_client import LMBTechClient, LMBTechError
+from app.services import sandbox, webhook_dispatcher
+from app.services.lmbtech_client import GatewayResult, LMBTechClient, LMBTechError
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +157,25 @@ class PaymentService:
         override = integrator.get(column)
         return Decimal(str(override)) if override is not None else pricing.default_fee(direction)
 
-    async def available_balance(self, integrator_id: int) -> Decimal:
-        return await self._repo.integrator_balance(integrator_id)
+    @staticmethod
+    def is_sandbox(integrator: Optional[dict]) -> bool:
+        """Sandbox = simulated by Soila Pay, never sent to LMBTech.
+        API calls: the key decides (sandbox key -> sandbox, production key ->
+        live). Portal sessions: the account mode decides (Test Mode ->
+        sandbox). The admin console (no integrator) is always live."""
+        if integrator is None:
+            return False
+        if integrator.get("key_mode") in ("sandbox", "production"):
+            return integrator["key_mode"] == "sandbox"
+        return integrator.get("account_mode") != "PRODUCTION"
+
+    def is_test_for(self, sandboxed: bool) -> bool:
+        return sandboxed or self._settings.lmbtech_test_mode
+
+    async def available_balance(self, integrator: dict) -> Decimal:
+        """Balance in the integrator's current mode: sandbox money for
+        sandbox, real money for live - never mixed."""
+        return await self._repo.integrator_balance(integrator["id"], is_test=self.is_test_for(self.is_sandbox(integrator)))
 
     @property
     def gateway_configured(self) -> bool:
@@ -186,6 +203,7 @@ class PaymentService:
         amount = Decimal(body.amount_rwf)
         pricing = await self.pricing()
         money = compute_money(amount, self.fee_for(integrator, pricing), pricing.gateway_cost_percentage)
+        sandboxed = self.is_sandbox(integrator)
 
         await self._repo.create(
             reference_id=reference_id,
@@ -200,8 +218,20 @@ class PaymentService:
             customer_phone=body.customer_phone,
             description=body.description or "payment",
             return_url=str(body.return_url) if body.return_url else None,
-            is_test=self._settings.lmbtech_test_mode,
+            is_test=self.is_test_for(sandboxed),
+            gateway=sandbox.GATEWAY if sandboxed else "LMBTECH",
         )
+
+        if sandboxed:
+            # Card: Soila Pay's sandbox card page decides. MoMo: settles a few
+            # seconds later by the test phone number (see app/services/sandbox.py).
+            redirect = f"{self._settings.frontend_base_url.rstrip('/')}/pay/sandbox?ref={reference_id}" if method == "CARD" else None
+            await self._repo.set_pending_details(
+                reference_id,
+                status_message="Sandbox: waiting for the test card page" if redirect else "Sandbox: waiting for the customer to approve",
+                redirect_url=redirect,
+            )
+            return await self._repo.get_by_reference(reference_id)
 
         try:
             result = await self._gateway.pay(
@@ -231,12 +261,15 @@ class PaymentService:
         amount = Decimal(body.amount_rwf)
         pricing = await self.pricing()
         money = compute_money(amount, self.fee_for(integrator, pricing, DISBURSEMENT), pricing.payout_cost_percentage)
+        sandboxed = self.is_sandbox(integrator)
+        is_test = self.is_test_for(sandboxed)
 
         lock = self._payout_locks[integrator["id"]] if integrator else asyncio.Lock()
         async with lock:
             if integrator is not None:
                 needed = amount + (money.fee_amount_rwf or Decimal(0))
-                available = await self._repo.integrator_balance(integrator["id"])
+                # Same ledger as the payout: real payouts only spend real money.
+                available = await self._repo.integrator_balance(integrator["id"], is_test=is_test)
                 if needed > available:
                     raise InsufficientBalanceError(needed, available)
             await self._repo.create(
@@ -252,9 +285,16 @@ class PaymentService:
                 customer_phone=body.recipient_phone,
                 description=body.description or "payout",
                 return_url=None,
-                is_test=self._settings.lmbtech_test_mode,
+                is_test=is_test,
                 is_cashout=is_cashout,
+                gateway=sandbox.GATEWAY if sandboxed else "LMBTECH",
             )
+
+        if sandboxed:
+            await self._repo.set_pending_details(
+                reference_id, status_message="Sandbox: payout is being delivered (simulated)", redirect_url=None
+            )
+            return await self._repo.get_by_reference(reference_id)
 
         try:
             result = await self._gateway.payout(
@@ -294,8 +334,10 @@ class PaymentService:
             raise CashoutSetupError("Add your bank name and account number on the Account page first.")
         amount = Decimal(amount_rwf)
         reference_id = new_reference("SB")
+        sandboxed = self.is_sandbox(integrator)
+        is_test = self.is_test_for(sandboxed)
         async with self._payout_locks[integrator["id"]]:
-            available = await self._repo.integrator_balance(integrator["id"])
+            available = await self._repo.integrator_balance(integrator["id"], is_test=is_test)
             if amount > available:
                 raise InsufficientBalanceError(amount, available)
             await self._repo.create(
@@ -311,12 +353,16 @@ class PaymentService:
                 customer_phone=None,
                 description=f"Cash-out to {bank} {account}"[:120],
                 return_url=None,
-                is_test=self._settings.lmbtech_test_mode,
+                is_test=is_test,
                 is_cashout=True,
-                gateway="MANUAL",
+                # Sandbox: a simulated transfer that settles by itself; live:
+                # an admin sends the real transfer and settles it.
+                gateway=sandbox.GATEWAY if sandboxed else "MANUAL",
             )
-        await self._repo.update_gateway_state(
-            reference_id, status="PENDING", status_message="Waiting for Soila Pay to send the bank transfer"
+        await self._repo.set_pending_details(
+            reference_id,
+            status_message="Sandbox: simulated bank transfer" if sandboxed else "Waiting for Soila Pay to send the bank transfer",
+            redirect_url=None,
         )
         return await self._repo.get_by_reference(reference_id)
 
@@ -358,6 +404,8 @@ class PaymentService:
         """Ask the gateway for the real status and record it. Safe to call
         repeatedly; a no-op once the row is final."""
         row = await self._repo.get_by_reference(reference_id)
+        if row is not None and row["status"] not in TERMINAL_STATUSES and row.get("gateway") == sandbox.GATEWAY:
+            return await self._sync_sandbox(row)
         # Bank cash-outs are settled by an admin, not LMBTech.
         if row is None or row["status"] in TERMINAL_STATUSES or row.get("gateway") != "LMBTECH":
             return row
@@ -380,6 +428,29 @@ class PaymentService:
             logger.info("payment_status_changed", extra={"reference_id": reference_id, "status": row["status"]})
             await self._notify(row)
         return row
+
+    # -- Sandbox -------------------------------------------------------------
+
+    async def _sync_sandbox(self, row: dict) -> dict:
+        """Settle a simulated MoMo payment, payout or bank cash-out once it's
+        due. Sandbox cards wait for the sandbox card page instead."""
+        if row["method"] == "CARD" or not sandbox.due(row.get("created_at")):
+            return row
+        if row["method"] == "BANK":
+            result = GatewayResult(status="SUCCESS", message="Sandbox: bank transfer sent (simulated)", transaction_id=sandbox.transaction_id())
+        else:
+            result = sandbox.phone_outcome(row.get("customer_phone"), payout=row["direction"] == DISBURSEMENT)
+        return await self._apply(row["reference_id"], result)
+
+    async def complete_sandbox_card(self, reference_id: str, *, approve: bool, card_number: Optional[str]) -> Optional[dict]:
+        """The sandbox card page's Pay / Cancel buttons. Only ever touches a
+        pending SANDBOX card row - never a live payment."""
+        row = await self._repo.get_by_reference(reference_id)
+        if row is None or row.get("gateway") != sandbox.GATEWAY or row["method"] != "CARD":
+            return None
+        if row["status"] in TERMINAL_STATUSES:
+            return row
+        return await self._apply(reference_id, sandbox.card_outcome(card_number, approve))
 
     # -- Reconciliation with LMBTech -----------------------------------------
 

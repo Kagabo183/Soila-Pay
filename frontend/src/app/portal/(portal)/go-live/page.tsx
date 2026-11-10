@@ -1,11 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { Rocket, CheckCircle2, Clock, XCircle, Upload } from "lucide-react";
+import { Rocket, CheckCircle2, Circle, Clock, ListChecks, XCircle, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { integratorPortalService } from "@/services/integrator-portal.service";
+import { integratorPortalService, type GoLiveChecklist } from "@/services/integrator-portal.service";
 import { useIntegratorPortalStore } from "@/store/integrator-portal-store";
 import { toast } from "@/store/toast-store";
 import type { DocumentType, IntegratorDocument } from "@/types/api";
@@ -80,6 +80,12 @@ export default function PortalGoLivePage() {
   const [ipWhitelist, setIpWhitelist] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [documents, setDocuments] = React.useState<IntegratorDocument[]>([]);
+  const [checklist, setChecklist] = React.useState<GoLiveChecklist | null>(null);
+
+  const loadChecklist = React.useCallback(() => {
+    if (!token) return;
+    integratorPortalService.getGoLiveChecklist(token).then(setChecklist).catch(() => setChecklist(null));
+  }, [token]);
 
   React.useEffect(() => {
     if (!token) return;
@@ -87,8 +93,9 @@ export default function PortalGoLivePage() {
     integratorPortalService.listProductionDocuments(token).then((docs) => {
       if (mounted) setDocuments(docs);
     });
+    loadChecklist();
     return () => { mounted = false; };
-  }, [token]);
+  }, [token, loadChecklist]);
 
   if (!integrator || !token) return null;
 
@@ -97,7 +104,10 @@ export default function PortalGoLivePage() {
 
   function handleDocUploaded(doc: IntegratorDocument) {
     setDocuments((prev) => [...prev.filter((d) => d.documentType !== doc.documentType), doc]);
+    loadChecklist();
   }
+
+  const auto = checklist?.autoGoLive ?? true;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -109,7 +119,10 @@ export default function PortalGoLivePage() {
         ipWhitelist: ipWhitelist || undefined,
       });
       updateIntegrator(updated);
-      toast({ title: "Submitted for review", variant: "success" });
+      toast({
+        title: updated.productionStatus === "APPROVED" ? "You're live! Your production key is ready." : "Submitted for review",
+        variant: "success",
+      });
     } catch (err) {
       toast({ title: err instanceof Error ? err.message : "Submission failed", variant: "error" });
     } finally {
@@ -164,9 +177,39 @@ export default function PortalGoLivePage() {
       <div>
         <h1 className="text-xl font-semibold text-foreground">Go Live</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Submit your business details to unlock a production API key.
+          {auto
+            ? "Finish the checklist, then press Go live - your account switches to real money instantly, no waiting."
+            : "Finish the checklist, then submit for review to unlock a production API key."}
         </p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ListChecks className="h-4 w-4" /> Go-live checklist
+          </CardTitle>
+          <CardDescription>
+            Test with your <b>sandbox key</b> first - nothing real is charged. See the Dev Tools page for test cards and phone numbers.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!checklist ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : (
+            <ul className="flex flex-col gap-2 text-sm">
+              {checklist.items.map((i) => (
+                <li key={i.key} className="flex items-center gap-2">
+                  {i.done ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                  <span className={i.done ? "" : "text-muted-foreground"}>{i.label}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button type="button" onClick={loadChecklist} className="mt-3 text-xs underline">
+            Refresh
+          </button>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -196,11 +239,11 @@ export default function PortalGoLivePage() {
               onChange={(e) => setIpWhitelist(e.target.value)}
               placeholder="203.0.113.10, 203.0.113.11" />
             <div>
-              <Button type="submit" loading={submitting} disabled={!taxDoc || !rdbDoc} className="w-fit">
-                Submit for review
+              <Button type="submit" loading={submitting} disabled={!checklist?.ready} className="w-fit">
+                {auto ? <><Rocket className="h-4 w-4" /> Go live now</> : "Submit for review"}
               </Button>
-              {(!taxDoc || !rdbDoc) && (
-                <p className="mt-2 text-xs text-muted-foreground">Upload both documents to enable submission.</p>
+              {!checklist?.ready && (
+                <p className="mt-2 text-xs text-muted-foreground">Finish every item on the checklist above to go live.</p>
               )}
             </div>
           </form>

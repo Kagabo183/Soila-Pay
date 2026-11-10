@@ -102,7 +102,8 @@ async def lifespan(app: FastAPI):
         )
 
     payment_task = None
-    if settings.payment_reconciliation_enabled and lmbtech_client.configured:
+    # Also settles sandbox payments, so it runs even without LMBTech keys.
+    if settings.payment_reconciliation_enabled:
         payment_task = asyncio.create_task(
             _payment_reconciliation_loop(
                 app,

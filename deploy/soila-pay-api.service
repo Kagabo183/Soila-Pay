@@ -10,7 +10,7 @@ Type=simple
 User=www-data
 WorkingDirectory=/var/www/soila-pay
 EnvironmentFile=/var/www/soila-pay/.env
-ExecStart=/var/www/soila-pay/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=/var/www/soila-pay/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=3
 

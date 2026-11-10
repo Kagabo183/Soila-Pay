@@ -193,8 +193,11 @@ class IntegratorRepo:
                     """
                     UPDATE integrators
                     SET production_status = 'APPROVED',
-                        production_api_key = %s,
-                        production_rejection_reason = NULL
+                        production_api_key = COALESCE(production_api_key, %s),
+                        production_rejection_reason = NULL,
+                        -- approval must also switch the account live, or the
+                        -- production key is refused ("account is in Test Mode")
+                        account_mode = 'PRODUCTION'
                     WHERE id = %s
                     """,
                     (production_api_key, integrator_id),
@@ -254,7 +257,9 @@ class IntegratorRepo:
                     """
                     UPDATE integrators
                     SET production_status = 'REJECTED',
-                        production_rejection_reason = %s
+                        production_rejection_reason = %s,
+                        -- rejecting (or revoking) an account takes it off live money
+                        account_mode = 'TEST'
                     WHERE id = %s
                     """,
                     (reason, integrator_id),
