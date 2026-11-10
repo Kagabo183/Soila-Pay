@@ -4,10 +4,11 @@ import { Moon, Sun, LogOut, User, Wifi, WifiOff } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useThemeStore } from "@/store/theme-store";
 import { useAuthStore } from "@/store/auth-store";
-import { useSettingsStore } from "@/store/settings-store";
+import * as React from "react";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { toast } from "@/store/toast-store";
 import { authService } from "@/services/auth.service";
+import { paymentService } from "@/services/payment.service";
 import { MOCK_MODE } from "@/lib/mock";
 
 export function TopNav() {
@@ -15,7 +16,19 @@ export function TopNav() {
   const toggleTheme = useThemeStore((s) => s.toggleTheme);
   const user = useAuthStore((s) => s.user);
   const clearSession = useAuthStore((s) => s.clearSession);
-  const environment = useSettingsStore((s) => s.environment);
+  // The badge follows the backend's real gateway mode (LMBTECH_TEST_MODE),
+  // not a browser setting - so it can't say "Sandbox" while real money moves.
+  const [live, setLive] = React.useState<boolean | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    paymentService
+      .summary({ kind: "admin" })
+      .then((s) => alive && setLive(!s.testMode))
+      .catch(() => alive && setLive(null));
+    return () => {
+      alive = false;
+    };
+  }, []);
   const router = useRouter();
 
   async function handleLogout() {
@@ -28,9 +41,11 @@ export function TopNav() {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b-2 border-border bg-card px-5">
       <div className="flex items-center gap-3">
-        <StatusBadge variant={environment === "production" ? "destructive" : "info"} dot>
-          {environment === "production" ? "Production" : "Sandbox"}
-        </StatusBadge>
+        {live !== null && (
+          <StatusBadge variant={live ? "destructive" : "info"} dot>
+            {live ? "Production - real money" : "Test mode"}
+          </StatusBadge>
+        )}
         <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
           {MOCK_MODE ? (
             <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />

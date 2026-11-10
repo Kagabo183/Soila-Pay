@@ -93,14 +93,35 @@ async def test_sends_basic_auth_and_card_fields():
             },
         )
     )
+    respx.get("https://pay.lmbtech.rw/pay/pesapal/iframe.php").mock(
+        return_value=httpx.Response(
+            200,
+            text='<h1>LMBTECH CARD PAYMENT</h1><iframe src="https://pay.pesapal.com/iframe/PesapalIframe3/Index?OrderTrackingId=abc-123" width="100%">',
+        )
+    )
     result = await _client().pay(**_pay_kwargs())
     assert result.status == "PENDING"
-    assert result.redirect_url.startswith("https://pay.lmbtech.rw/pay/pesapal/")
+    # LMBTech's branded wrapper is unwrapped to Pesapal's form, so Soila Pay
+    # can embed it in its own checkout.
+    assert result.redirect_url == "https://pay.pesapal.com/iframe/PesapalIframe3/Index?OrderTrackingId=abc-123"
     req = route.calls.last.request
     assert req.headers["Authorization"] == "Basic " + base64.b64encode(b"app_x:scrt_y").decode()
     body = httpx.Request("POST", URL, content=req.content).read()
     assert b'"payment_method":"card"' in body.replace(b" ", b"")
     assert b"card_redirect_url" in body and b"payer_phone" not in body
+
+
+@respx.mock
+async def test_card_page_falls_back_to_lmbtech_wrapper():
+    wrapper = "https://pay.lmbtech.rw/pay/pesapal/iframe.php?reference_id=SP-TEST-1&amount=1000"
+    respx.post(URL).mock(return_value=httpx.Response(200, json={"status": "pending", "data": {"status": "pending"}, "redirect_url": wrapper}))
+    # A non-Pesapal iframe is never handed out, and a fetch failure keeps the
+    # wrapper - the payment must still work.
+    get = respx.get("https://pay.lmbtech.rw/pay/pesapal/iframe.php")
+    get.mock(return_value=httpx.Response(200, text='<iframe src="https://pesapal.evil.io/x">'))
+    assert (await _client().pay(**_pay_kwargs())).redirect_url == wrapper
+    get.mock(side_effect=httpx.ConnectError("down"))
+    assert (await _client().pay(**_pay_kwargs())).redirect_url == wrapper
 
 
 @respx.mock

@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     # Comma-separated list of origins allowed to call this API from a browser
     # (the console frontend). Defaults cover the console's own local dev
     # server - override for any deployed frontend origin.
-    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    # https variants: `npm run dev:https` (browsers only autofill card forms
+    # on https pages, even inside an embedded payment iframe).
+    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000,https://localhost:3000,https://127.0.0.1:3000"
 
     # Fineract
     fineract_base_url: str = "https://localhost:8443/fineract-provider/api/v1"

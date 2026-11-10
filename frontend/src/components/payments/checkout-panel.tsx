@@ -337,13 +337,28 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
               <>
                 <p className="bk-display mt-6 text-3xl font-bold">Enter the card details</p>
                 <p className="mt-2 max-w-sm text-sm">
-                  Press the button to open the bank&apos;s secure card page for <b>{rwf(payment.amountRwf)}</b>. This screen updates by itself when the bank
-                  confirms.
+                  Pay <b>{rwf(payment.amountRwf)}</b> in the secure card form below. This screen updates by itself when the bank confirms.
                 </p>
                 {payment.redirectUrl ? (
-                  <a href={payment.redirectUrl} target="_blank" rel="noopener noreferrer" className="bk-btn bk-fill-blue mt-5 h-14 px-6 text-base">
-                    <Lock className="h-5 w-5" /> Continue to secure card page <ExternalLink className="h-4 w-4" />
-                  </a>
+                  <>
+                    {/* The bank's (Pesapal's) hosted form, embedded: the card
+                        number is typed into their page, never into Soila Pay. */}
+                    <div className="bk-box mt-5 w-full overflow-hidden bg-white shadow-[var(--bk-shadow)]">
+                      <p className="bk-fill-ink flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold uppercase text-white">
+                        <Lock className="h-3.5 w-3.5" /> Secure card payment · {rwf(payment.amountRwf)}
+                      </p>
+                      <iframe
+                        src={payment.redirectUrl}
+                        title="Secure card payment"
+                        className="block h-[640px] w-full border-0"
+                        allow="payment"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <a href={payment.redirectUrl} target="_blank" rel="noopener noreferrer" className="bk-muted mt-2 inline-flex items-center gap-1 text-xs underline">
+                      Form not loading? Open it in a new tab <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </>
                 ) : (
                   <p className="bk-box bk-fill-red mt-5 p-3 text-sm font-semibold">The gateway did not send a card page. Cancel and try again.</p>
                 )}

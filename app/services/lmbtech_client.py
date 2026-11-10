@@ -29,9 +29,11 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -54,6 +56,21 @@ _STATUS_MAP = {
 
 def normalize_status(raw: Any) -> str:
     return _STATUS_MAP.get(str(raw).strip().lower(), "PENDING")
+
+
+# LMBTech's card page (pay.lmbtech.rw/pay/pesapal/iframe.php) is only an
+# LMBTech-branded wrapper around Pesapal's hosted card form, observed live
+# 2026-11-10 as <iframe src="https://pay.pesapal.com/iframe/PesapalIframe3/
+# Index?OrderTrackingId=...">. We hand out Pesapal's form directly so it can
+# be embedded in Soila Pay's own checkout. Card numbers are still typed into
+# Pesapal's form, never into Soila Pay.
+_PESAPAL_IFRAME_RE = re.compile(r"""<iframe[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
+
+
+def _is_pesapal_form(url: str) -> bool:
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    return p.scheme == "https" and (host == "pesapal.com" or host.endswith(".pesapal.com"))
 
 
 class LMBTechError(Exception):
@@ -87,6 +104,20 @@ class LMBTechClient:
     @property
     def configured(self) -> bool:
         return bool(self._settings.lmbtech_app_key and self._settings.lmbtech_secret_key)
+
+    async def _card_form_url(self, wrapper_url: str) -> str:
+        """Pesapal's card form inside LMBTech's wrapper page, or the wrapper
+        itself if it can't be found (layout changed, network blip) - the
+        payment still works either way, just with LMBTech's header."""
+        try:
+            resp = await self._client.get(wrapper_url, timeout=8.0)
+            for src in _PESAPAL_IFRAME_RE.findall(resp.text):
+                if _is_pesapal_form(src):
+                    return src
+            logger.warning("lmbtech_card_form_not_found", extra={"url": wrapper_url})
+        except httpx.HTTPError as exc:
+            logger.warning("lmbtech_card_form_fetch_failed", extra={"error": exc.__class__.__name__})
+        return wrapper_url
 
     def _headers(self) -> dict[str, str]:
         if not self.configured:
@@ -169,6 +200,8 @@ class LMBTechClient:
         # still-pending card payment needs a page to send the customer to.
         if method == "CARD" and status == "PENDING" and not redirect_url:
             raise LMBTechError(str(data.get("message") or "Gateway did not return a card payment page"))
+        if method == "CARD" and redirect_url:
+            redirect_url = await self._card_form_url(redirect_url)
 
         logger.info(
             "lmbtech_pay_accepted",
