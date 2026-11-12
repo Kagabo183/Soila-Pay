@@ -13,6 +13,9 @@ async def create_pool(settings: Settings) -> aiomysql.Pool:
         minsize=settings.mysql_pool_min_size,
         maxsize=settings.mysql_pool_max_size,
         autocommit=True,
+        # Replace connections older than this, before the server drops them
+        # (shared hosting: MySQL wait_timeout is 60s). -1 = never.
+        pool_recycle=settings.mysql_pool_recycle_seconds,
     )
 
 

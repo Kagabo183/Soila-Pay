@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     mysql_db: str = "soila_pay"
     mysql_pool_min_size: int = 1
     mysql_pool_max_size: int = 10
+    # Recycle pooled connections older than this many seconds; keep it below
+    # the server's wait_timeout (60s on Namecheap shared hosting). -1 = never.
+    mysql_pool_recycle_seconds: int = -1
 
 
 settings = Settings()
