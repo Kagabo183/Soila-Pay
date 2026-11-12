@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     public_api_base_url: str = "http://localhost:8000"
     # Public URL of the web app - card payers land on {this}/pay/return.
     frontend_base_url: str = "http://localhost:3000"
+    # Shared hosting only (passenger_wsgi.py): folder with the exported
+    # frontend, served for every path outside /api when the app is mounted
+    # at the site root. Empty = the web server serves the frontend itself.
+    static_site_dir: str = ""
     # Background poll of PENDING payments (covers callbacks that never arrive).
     payment_reconciliation_enabled: bool = True
     payment_reconciliation_interval_seconds: float = 20.0
