@@ -19,6 +19,7 @@ from app.db.integrator_webhook_repo import IntegratorWebhookRepo
 from app.db.payment_repo import PaymentRepo
 from app.logging_conf import configure_logging
 from app.services.fineract_client import FineractClient
+from app.services.kitovu_client import KitovuClient
 from app.services.lmbtech_client import LMBTechClient
 from app.services.payment_service import PaymentService
 
@@ -63,6 +64,7 @@ async def lifespan(app: FastAPI):
     integrator_repo = IntegratorRepo(pool)
     integrator_webhook_repo = IntegratorWebhookRepo(pool)
     lmbtech_client = LMBTechClient(settings)
+    kitovu = KitovuClient(settings)
 
     app.state.settings = settings
     app.state.db_pool = pool
@@ -77,7 +79,15 @@ async def lifespan(app: FastAPI):
         gateway=lmbtech_client,
         webhook_repo=integrator_webhook_repo,
         integrator_repo=integrator_repo,
+        kitovu=kitovu,
     )
+    app.state.kitovu_client = kitovu
+    if settings.momo_gateway == "kitovu":
+        logger.warning(
+            "MoMo collections go through Kitovu Pay (%s)%s",
+            settings.kitovupay_base_url,
+            "" if kitovu.configured else " - but KITOVUPAY_API_KEY / KITOVUPAY_API_SECRET are missing, so they use LMBTech",
+        )
 
     if not lmbtech_client.configured:
         logger.warning("LMBTECH_APP_KEY / LMBTECH_SECRET_KEY are not set - collections and payouts are disabled.")
@@ -121,6 +131,7 @@ async def lifespan(app: FastAPI):
             with suppress(asyncio.CancelledError):
                 await payment_task
         await lmbtech_client.aclose()
+        await kitovu.aclose()
         await fineract_client.aclose()
         await close_pool(pool)
         logger.info("shutdown_complete")

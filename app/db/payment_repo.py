@@ -82,20 +82,21 @@ class PaymentRepo:
         imported: bool = False,
         is_cashout: bool = False,
         gateway: str = "LMBTECH",
+        gateway_external_id: Optional[str] = None,
     ) -> dict:
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
                     """
                     INSERT INTO payments
-                        (reference_id, gateway, direction, is_cashout, integrator_id, method, channel, amount_rwf,
+                        (reference_id, gateway, gateway_external_id, direction, is_cashout, integrator_id, method, channel, amount_rwf,
                          fee_percentage, fee_amount_rwf, gateway_cost_percentage,
                          gateway_cost_amount_rwf, margin_amount_rwf, customer_name,
                          customer_email, customer_phone, description, return_url, is_test, imported)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        reference_id, gateway, direction, int(is_cashout), integrator_id, method, channel, amount_rwf,
+                        reference_id, gateway, gateway_external_id, direction, int(is_cashout), integrator_id, method, channel, amount_rwf,
                         money.fee_percentage, money.fee_amount_rwf, money.gateway_cost_percentage,
                         money.gateway_cost_amount_rwf, money.margin_amount_rwf, customer_name,
                         customer_email, customer_phone, description, return_url, int(is_test), int(imported),
@@ -116,6 +117,25 @@ class PaymentRepo:
                     (reference_id,),
                 )
                 return await cur.fetchone()
+
+    async def get_by_external_id(self, gateway: str, external_id: str) -> Optional[dict]:
+        """A payment by the id a gateway knows it by (Kitovu's externalId)."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT reference_id FROM payments WHERE gateway = %s AND gateway_external_id = %s",
+                    (gateway, external_id),
+                )
+                row = await cur.fetchone()
+        return await self.get_by_reference(row["reference_id"]) if row else None
+
+    async def external_id_taken(self, gateway: str, external_id: str) -> bool:
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT 1 FROM payments WHERE gateway = %s AND gateway_external_id = %s", (gateway, external_id)
+                )
+                return await cur.fetchone() is not None
 
     async def set_pending_details(self, reference_id: str, *, status_message: str, redirect_url: Optional[str]) -> None:
         """Message + card page for a row that's still PENDING (sandbox rows,
@@ -434,7 +454,7 @@ class PaymentRepo:
         async with self._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT reference_id FROM payments WHERE status = 'PENDING' AND gateway IN ('LMBTECH', 'SANDBOX') "
+                    "SELECT reference_id FROM payments WHERE status = 'PENDING' AND gateway IN ('LMBTECH', 'SANDBOX', 'KITOVU') "
                     "AND created_at >= %s ORDER BY created_at DESC LIMIT 200",
                     (since,),
                 )

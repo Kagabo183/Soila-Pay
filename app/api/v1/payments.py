@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from app.api.v1.deps import require_admin
 from app.api.v1.integrator_portal import _current_integrator
+from app.services import kitovu_client
 from app.schemas.payment import (
     CashoutRequest,
     DisbursementCreate,
@@ -430,6 +431,30 @@ async def lmbtech_callback(request: Request):
         "status": row is not None,
         "message": "Callback received and processed" if row else "Unknown reference",
         "site_url": request.app.state.settings.frontend_base_url,
+    }
+
+
+@router.post("/callback/kitovu")
+async def kitovu_callback(request: Request):
+    """Kitovu Pay posts {"externalId", "status", ...} when a MoMo payment
+    finishes. The body is NOT signed, so it is only used to find the row; the
+    real status comes from Kitovu's authenticated status API (sync) - a forged
+    callback can't mark anything paid. Always 200 so Kitovu stops retrying."""
+    try:
+        data = json.loads(await request.body() or b"{}")
+    except ValueError:
+        data = {}
+    external_id = str(data.get("externalId") or "").strip() if isinstance(data, dict) else ""
+    row = None
+    if external_id:
+        row = await request.app.state.payment_repo.get_by_external_id(kitovu_client.GATEWAY, external_id)
+        if row is not None:
+            row = await _service(request).sync(row["reference_id"])
+    logger.info("kitovu_callback", extra={"external_id": external_id, "found": row is not None})
+    return {
+        "success": True,
+        "message": "Webhook received and processed" if row else "Unknown externalId",
+        "transactionId": data.get("transactionId") if isinstance(data, dict) else None,
     }
 
 

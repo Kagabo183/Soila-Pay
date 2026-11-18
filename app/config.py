@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +46,15 @@ class Settings(BaseSettings):
     # phone (observed >40s live). We don't make the caller wait for that: past
     # this timeout the payment is treated as PENDING and resolved by polling.
     lmbtech_timeout_seconds: float = 20.0
+
+    # Kitovu Pay - MTN MoMo collections (cards stay on LMBTech). Off until
+    # MOMO_GATEWAY=kitovu. UAT = Kitovu's test gateway; production is
+    # https://gateway.kitovupay.com with production keys.
+    momo_gateway: Literal["lmbtech", "kitovu"] = "lmbtech"
+    kitovupay_base_url: str = "https://gateway.uat.kitovupay.com"
+    kitovupay_api_key: str = ""
+    kitovupay_api_secret: str = ""
+    kitovupay_timeout_seconds: float = 30.0
     # Public URL of THIS API, used to build the callback_url LMBTech posts to.
     # localhost works for local dev only via polling (LMBTech can't reach it).
     public_api_base_url: str = "http://localhost:8000"

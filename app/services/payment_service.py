@@ -31,6 +31,8 @@ from app.db.integrator_webhook_repo import IntegratorWebhookRepo
 from app.db.payment_repo import TERMINAL_STATUSES, PaymentRepo
 from app.schemas.payment import CARD_CHANNELS, DisbursementCreate, PaymentCreate
 from app.services import sandbox, webhook_dispatcher
+from app.services import kitovu_client
+from app.services.kitovu_client import KitovuClient, KitovuError
 from app.services.lmbtech_client import GatewayResult, LMBTechClient, LMBTechError
 
 logger = logging.getLogger(__name__)
@@ -124,10 +126,14 @@ class PaymentService:
         gateway: LMBTechClient,
         webhook_repo: IntegratorWebhookRepo,
         integrator_repo: IntegratorRepo,
+        kitovu: Optional[KitovuClient] = None,
     ):
         self._settings = settings
         self._repo = repo
         self._gateway = gateway
+        # MoMo collections go to Kitovu Pay when MOMO_GATEWAY=kitovu (cards
+        # and payouts stay on LMBTech).
+        self._kitovu = kitovu
         self._webhook_repo = webhook_repo
         self._integrator_repo = integrator_repo
         # One payout at a time per integrator, so two concurrent payouts can't
@@ -180,6 +186,25 @@ class PaymentService:
         return await self._repo.integrator_balance(integrator["id"], is_test=is_test)
 
     @property
+    def momo_via_kitovu(self) -> bool:
+        return (
+            self._settings.momo_gateway == "kitovu" and self._kitovu is not None and self._kitovu.configured
+        )
+
+    def _kitovu_callback_url(self) -> str:
+        return f"{self._settings.public_api_base_url.rstrip('/')}/api/v1/payments/callback/kitovu"
+
+    async def _new_kitovu_external_id(self) -> str:
+        """Kitovu wants a unique 6-digit externalId per collection."""
+        import secrets
+
+        for _ in range(20):
+            candidate = str(100000 + secrets.randbelow(900000))
+            if not await self._repo.external_id_taken(kitovu_client.GATEWAY, candidate):
+                return candidate
+        raise KitovuError("Could not allocate a Kitovu reference - try again")
+
+    @property
     def gateway_configured(self) -> bool:
         return self._gateway.configured
 
@@ -206,6 +231,10 @@ class PaymentService:
         pricing = await self.pricing()
         money = compute_money(amount, self.fee_for(integrator, pricing), pricing.gateway_cost_percentage)
         sandboxed = self.is_sandbox(integrator)
+        via_kitovu = not sandboxed and method == "MOMO" and self.momo_via_kitovu
+        external_id = await self._new_kitovu_external_id() if via_kitovu else None
+        # Kitovu's UAT gateway moves no real money - record it as test money.
+        is_test = self.is_test_for(sandboxed) or (via_kitovu and self._kitovu.is_uat)
 
         await self._repo.create(
             reference_id=reference_id,
@@ -220,9 +249,25 @@ class PaymentService:
             customer_phone=body.customer_phone,
             description=body.description or "payment",
             return_url=str(body.return_url) if body.return_url else None,
-            is_test=self.is_test_for(sandboxed),
-            gateway=sandbox.GATEWAY if sandboxed else "LMBTECH",
+            is_test=is_test,
+            gateway=sandbox.GATEWAY if sandboxed else (kitovu_client.GATEWAY if via_kitovu else "LMBTECH"),
+            gateway_external_id=external_id,
         )
+
+        if via_kitovu:
+            try:
+                result = await self._kitovu.collect(
+                    external_id=external_id,
+                    amount=amount,
+                    phone=body.customer_phone,
+                    name=body.customer_name,
+                    description=body.description or "payment",
+                    callback_url=self._kitovu_callback_url(),
+                )
+            except KitovuError as exc:
+                logger.warning("kitovu_collection_refused", extra={"reference_id": reference_id, "error": exc.message})
+                return await self._fail(reference_id, exc.message)
+            return await self._apply(reference_id, result)
 
         if sandboxed:
             # Card: Soila Pay's sandbox card page decides. MoMo: settles a few
@@ -408,12 +453,20 @@ class PaymentService:
         row = await self._repo.get_by_reference(reference_id)
         if row is not None and row["status"] not in TERMINAL_STATUSES and row.get("gateway") == sandbox.GATEWAY:
             return await self._sync_sandbox(row)
-        # Bank cash-outs are settled by an admin, not LMBTech.
-        if row is None or row["status"] in TERMINAL_STATUSES or row.get("gateway") != "LMBTECH":
+        if row is None or row["status"] in TERMINAL_STATUSES:
+            return row
+        gateway = row.get("gateway")
+        # Bank cash-outs are settled by an admin, not a gateway.
+        if gateway not in ("LMBTECH", kitovu_client.GATEWAY):
             return row
         try:
-            result = await self._gateway.get_status(reference_id)
-        except LMBTechError as exc:
+            if gateway == kitovu_client.GATEWAY:
+                if self._kitovu is None or not row.get("gateway_external_id"):
+                    return row
+                result = await self._kitovu.get_status(row["gateway_external_id"])
+            else:
+                result = await self._gateway.get_status(reference_id)
+        except (LMBTechError, KitovuError) as exc:
             logger.warning("payment_sync_failed", extra={"reference_id": reference_id, "error": exc.message})
             return row
         if result is None:

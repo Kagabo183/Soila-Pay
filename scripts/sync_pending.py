@@ -22,6 +22,7 @@ from app.db.integrator_repo import IntegratorRepo  # noqa: E402
 from app.db.integrator_webhook_repo import IntegratorWebhookRepo  # noqa: E402
 from app.db.payment_repo import PaymentRepo  # noqa: E402
 from app.services import webhook_dispatcher  # noqa: E402
+from app.services.kitovu_client import KitovuClient  # noqa: E402
 from app.services.lmbtech_client import LMBTechClient  # noqa: E402
 from app.services.payment_service import PaymentService  # noqa: E402
 
@@ -33,7 +34,8 @@ async def main() -> None:
     pool = await create_pool(settings)
     gateway = LMBTechClient(settings)
     repo = PaymentRepo(pool)
-    service = PaymentService(settings, repo, gateway, IntegratorWebhookRepo(pool), IntegratorRepo(pool))
+    kitovu = KitovuClient(settings)
+    service = PaymentService(settings, repo, gateway, IntegratorWebhookRepo(pool), IntegratorRepo(pool), kitovu)
     try:
         pending = await repo.list_pending_references(settings.payment_reconciliation_max_age_hours)
         for ref in pending:
@@ -54,6 +56,7 @@ async def main() -> None:
         log.info("checked %d pending, %d recently failed", len(pending), len(failed))
     finally:
         await gateway.aclose()
+        await kitovu.aclose()
         await close_pool(pool)
 
 
