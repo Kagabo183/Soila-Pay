@@ -279,13 +279,16 @@ async def test_payout_refused_without_account_email():
         await _payout_client(email="").payout(**_payout_kwargs())
 
 
-def test_disbursement_request_mtn_only():
+def test_disbursement_request_momo_numbers_only():
     from app.schemas.payment import DisbursementCreate
 
     ok = DisbursementCreate(amount_rwf=500, recipient_name="Aline", recipient_phone="0780000000", recipient_email="  ")
     assert ok.recipient_phone == "+250780000000" and ok.recipient_email is None
-    with pytest.raises(ValidationError, match="MTN numbers only"):
-        DisbursementCreate(amount_rwf=500, recipient_name="Aline", recipient_phone="0721234567")
+    # Airtel numbers are accepted by the schema (Kitovu pays them out)...
+    assert DisbursementCreate(amount_rwf=500, recipient_name="Aline", recipient_phone="0721234567").recipient_phone == "+250721234567"
+    # ...anything that isn't MTN or Airtel is not.
+    with pytest.raises(ValidationError, match="MTN .* or Airtel"):
+        DisbursementCreate(amount_rwf=500, recipient_name="Aline", recipient_phone="0751234567")
 
 
 async def test_payout_refused_when_integrator_balance_too_low():
@@ -366,14 +369,17 @@ async def test_bank_cashout_needs_bank_details():
         await svc.cashout({"id": 1, "name": "Shop", "bank_name": None, "bank_account": None}, "BANK", 500)
 
 
-async def test_momo_cashout_needs_an_mtn_phone():
+async def test_momo_cashout_needs_a_momo_phone():
     from app.services.payment_service import CashoutSetupError
 
     svc, _ = _cashout_service()
-    with pytest.raises(CashoutSetupError, match="No MTN number"):
+    with pytest.raises(CashoutSetupError, match="No MoMo number"):
         await svc.cashout({"id": 1, "name": "Shop", "phone_number": None}, "MOMO", 500)
-    with pytest.raises(CashoutSetupError, match="MTN 078/079"):
-        await svc.cashout({"id": 1, "name": "Shop", "phone_number": "0721234567"}, "MOMO", 500)
+    with pytest.raises(CashoutSetupError, match="MTN 078/079 or Airtel"):
+        await svc.cashout({"id": 1, "name": "Shop", "phone_number": "0751234567"}, "MOMO", 500)
+    # Airtel without Kitovu (LMBTech only does MTN): a clear message, no payout.
+    with pytest.raises(CashoutSetupError, match="Airtel"):
+        await svc.cashout({"id": 1, "name": "Shop", "phone_number": "0721234567", "account_mode": "PRODUCTION"}, "MOMO", 500)
 
 
 async def test_bank_cashout_reserves_balance_and_refuses_overdraw():

@@ -261,3 +261,45 @@ async def test_import_payout_made_on_lmbtech_dashboard():
     assert row["direction"] == "DISBURSEMENT" and row["method"] == "MOMO" and row["channel"] == "MTN"
     assert row["integrator_id"] is None and row["imported"] is True  # never touches an integrator's balance
     assert row["status"] == "SUCCESS" and row["customer_name"] == "Aline U." and row["customer_phone"] == "+250788123456"
+
+
+async def test_import_lmbtech_dashboard_cashout():
+    """LMBTech's dashboard "Cashout" (Soila Pay withdrawing its own balance)
+    is imported as a cash-out - even when LMBTech's status API can't find it."""
+    from app.schemas.payment import ImportRequest
+    from app.services.lmbtech_client import GatewayResult
+    from app.services.payment_service import Pricing
+
+    body = ImportRequest(reference_id="LMB-CASHOUT-1", amount_rwf=20000, direction="CASHOUT", cashout_to="BANK")
+    assert body.channel == "BANK"
+    assert ImportRequest(reference_id="LMB-CASHOUT-2", amount_rwf=500, direction="CASHOUT").channel == "MTN"
+
+    known = {"LMB-CASHOUT-2": GatewayResult(status="SUCCESS", message="Payout successful", name="Soila Pay")}
+
+    class Gateway:
+        configured = True
+
+        async def get_status(self, ref):
+            return known.get(ref)  # the bank cash-out is unknown to the API
+
+    repo = FakeRepo()
+
+    async def reconcile_state(ref, *, status, status_message, gateway_transaction_id, gateway_amount):
+        repo.rows[ref].update(status=status, status_message=status_message)
+
+    repo.reconcile_state = reconcile_state
+    svc = _svc(repo)
+    svc._gateway = Gateway()
+
+    async def pricing():
+        return Pricing(gateway_cost_percentage=Decimal("5"), default_fee_percentage=Decimal("6"),
+                       payout_cost_percentage=Decimal("5"), payout_default_fee_percentage=Decimal("6"))
+
+    svc.pricing = pricing
+    row = await svc.import_from_gateway(body.reference_id, body.amount_rwf, body.channel, "", direction="CASHOUT")
+    assert row["direction"] == "DISBURSEMENT" and row["is_cashout"] is True and row["method"] == "BANK"
+    assert row["status"] == "SUCCESS" and row["gateway"] == "MANUAL" and row["integrator_id"] is None
+    assert row["money"].gateway_cost_amount_rwf == Decimal("0.00")
+
+    row2 = await svc.import_from_gateway("LMB-CASHOUT-2", 500, "MTN", "", direction="CASHOUT")
+    assert row2["gateway"] == "LMBTECH" and row2["method"] == "MOMO" and row2["customer_name"] == "Soila Pay"

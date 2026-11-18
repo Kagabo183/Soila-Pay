@@ -52,6 +52,7 @@ DEFAULT_PAYMENT_FEE = Decimal("6.00")
 DEFAULT_PAYOUT_COST = Decimal("5.00")  # assumed same as collections until LMBTech confirms
 DEFAULT_PAYOUT_FEE = Decimal("6.00")
 DEFAULT_MOMO_COST = Decimal("3.00")  # Kitovu Pay, confirmed on its fee quote (3 RWF per 100)
+DEFAULT_MOMO_PAYOUT_COST_RWF = Decimal("400.00")  # Kitovu Pay: flat per payout, any amount (UAT quote)
 _CENT = Decimal("0.01")
 
 
@@ -89,6 +90,7 @@ class Pricing:
     payout_cost_percentage: Decimal  # LMBTech's cut on payouts
     payout_default_fee_percentage: Decimal  # integrators' default payout fee
     momo_cost_percentage: Decimal = DEFAULT_MOMO_COST  # Kitovu's cut on MoMo collections
+    momo_payout_cost_rwf: Decimal = DEFAULT_MOMO_PAYOUT_COST_RWF  # Kitovu's flat fee per payout
 
     @property
     def collection_cost_floor(self) -> Decimal:
@@ -111,6 +113,17 @@ class PaymentMoney:
     margin_amount_rwf: Optional[Decimal]
 
 
+def compute_money_flat_cost(amount: Decimal, fee_percentage: Optional[Decimal], cost_rwf: Decimal) -> PaymentMoney:
+    """Like compute_money, for a gateway that charges a fixed amount (Kitovu
+    payouts: 400 RWF whatever the size). The % is kept for display only."""
+    cost = cost_rwf.quantize(_CENT, ROUND_HALF_UP)
+    pct = (cost * 100 / amount).quantize(_CENT, ROUND_HALF_UP) if amount else Decimal(0)
+    if fee_percentage is None:
+        return PaymentMoney(None, None, pct, cost, None)
+    fee = (amount * fee_percentage / 100).quantize(_CENT, ROUND_HALF_UP)
+    return PaymentMoney(fee_percentage, fee, pct, cost, fee - cost)
+
+
 def compute_money(amount: Decimal, fee_percentage: Optional[Decimal], cost_percentage: Decimal) -> PaymentMoney:
     """fee (charged to the integrator) - LMBTech cost = margin. Console
     transactions (no integrator) have no fee and no margin - only the cost."""
@@ -127,6 +140,7 @@ _SETTING_KEYS = {
     "payout_cost_percentage": ("lmbtech_payout_cost_percentage", DEFAULT_PAYOUT_COST),
     "payout_default_fee_percentage": ("payout_fee_percentage", DEFAULT_PAYOUT_FEE),
     "momo_cost_percentage": ("kitovu_cost_percentage", DEFAULT_MOMO_COST),
+    "momo_payout_cost_rwf": ("kitovu_payout_cost_rwf", DEFAULT_MOMO_PAYOUT_COST_RWF),
 }
 
 
@@ -206,15 +220,41 @@ class PaymentService:
     def _kitovu_callback_url(self) -> str:
         return f"{self._settings.public_api_base_url.rstrip('/')}/api/v1/payments/callback/kitovu"
 
-    async def _new_kitovu_external_id(self) -> str:
-        """Kitovu wants a unique 6-digit externalId per collection."""
+    async def _new_kitovu_external_id(self, *, payout: bool = False) -> str:
+        """Kitovu wants a unique externalId: 6 digits for a collection, 7 for
+        a disbursement."""
         import secrets
 
+        low = 1_000_000 if payout else 100_000
         for _ in range(20):
-            candidate = str(100000 + secrets.randbelow(900000))
+            candidate = str(low + secrets.randbelow(9 * low))
             if not await self._repo.external_id_taken(kitovu_client.GATEWAY, candidate):
                 return candidate
         raise KitovuError("Could not allocate a Kitovu reference - try again")
+
+    async def momo_lookup(self, phone: str, amount_rwf: int, integrator: Optional[dict]) -> dict:
+        """Confirm step before a MoMo charge: the wallet's registered name and
+        the fee, like Kitovu's own "New Collection" screen. Never fails the
+        checkout - if a lookup can't be done, verified is False."""
+        out = {"phone": phone, "account_name": None, "verified": False, "amount_rwf": amount_rwf,
+               "customer_fee_rwf": 0.0, "total_to_pay_rwf": float(amount_rwf), "gateway": "LMBTECH"}
+        if self.is_sandbox(integrator):
+            return {**out, "account_name": "Test Customer", "verified": True, "gateway": sandbox.GATEWAY}
+        if not self.momo_via_kitovu:
+            return out  # LMBTech has no number lookup
+        out["gateway"] = kitovu_client.GATEWAY
+        try:
+            name = await self._kitovu.verify_number(phone)
+            out.update(account_name=name, verified=bool(name))
+        except KitovuError as exc:
+            logger.warning("kitovu_lookup_failed", extra={"error": exc.message})
+        try:
+            quote = await self._kitovu.fee(Decimal(amount_rwf), phone, callback_url=self._kitovu_callback_url())
+            fee = float(quote.get("subscriber_charges") or 0)
+            out.update(customer_fee_rwf=fee, total_to_pay_rwf=float(quote.get("total_subscriber_amount_to_pay") or amount_rwf + fee))
+        except KitovuError as exc:
+            logger.warning("kitovu_fee_quote_failed", extra={"error": exc.message})
+        return out
 
     @property
     def gateway_configured(self) -> bool:
@@ -222,7 +262,7 @@ class PaymentService:
 
     @property
     def payouts_configured(self) -> bool:
-        return self._gateway.configured and bool(self._settings.lmbtech_account_email)
+        return self.momo_via_kitovu or (self._gateway.configured and bool(self._settings.lmbtech_account_email))
 
     def _callback_url(self) -> str:
         return f"{self._settings.public_api_base_url.rstrip('/')}/api/v1/payments/callback/lmbtech"
@@ -271,12 +311,17 @@ class PaymentService:
         )
 
         if via_kitovu:
+            # Kitovu wants the wallet's registered name as the sender name.
+            try:
+                payer_name = await self._kitovu.verify_number(body.customer_phone) or body.customer_name
+            except KitovuError:
+                payer_name = body.customer_name
             try:
                 result = await self._kitovu.collect(
                     external_id=external_id,
                     amount=amount,
                     phone=body.customer_phone,
-                    name=body.customer_name,
+                    name=payer_name,
                     description=body.description or "payment",
                     callback_url=self._kitovu_callback_url(),
                 )
@@ -317,15 +362,25 @@ class PaymentService:
     async def create_disbursement(
         self, body: DisbursementCreate, integrator: Optional[dict], *, is_cashout: bool = False
     ) -> dict:
+        sandboxed = self.is_sandbox(integrator)
+        via_kitovu = not sandboxed and self.momo_via_kitovu
+        airtel = kitovu_client.rail_for(body.recipient_phone) == "airtel"
+        if airtel and not sandboxed and not via_kitovu:
+            raise ChannelUnavailableError("Airtel payouts are not available yet - use an MTN number")
         reference_id = body.reference_id or new_reference("SC" if is_cashout else "SD")
         if await self._repo.get_by_reference(reference_id):
             raise DuplicateReferenceError(f"Reference {reference_id} was already used")
 
         amount = Decimal(body.amount_rwf)
         pricing = await self.pricing()
-        money = compute_money(amount, self.fee_for(integrator, pricing, DISBURSEMENT), pricing.payout_cost_percentage)
-        sandboxed = self.is_sandbox(integrator)
-        is_test = self.is_test_for(sandboxed)
+        fee_pct = self.fee_for(integrator, pricing, DISBURSEMENT)
+        money = (
+            compute_money_flat_cost(amount, fee_pct, pricing.momo_payout_cost_rwf)
+            if via_kitovu
+            else compute_money(amount, fee_pct, pricing.payout_cost_percentage)
+        )
+        external_id = await self._new_kitovu_external_id(payout=True) if via_kitovu else None
+        is_test = self.is_test_for(sandboxed) or (via_kitovu and self._kitovu.is_uat)
 
         lock = self._payout_locks[integrator["id"]] if integrator else asyncio.Lock()
         async with lock:
@@ -340,7 +395,7 @@ class PaymentService:
                 direction=DISBURSEMENT,
                 integrator_id=integrator["id"] if integrator else None,
                 method="MOMO",
-                channel="MTN",
+                channel="AIRTEL" if airtel else "MTN",
                 amount_rwf=amount,
                 money=money,
                 customer_name=body.recipient_name,
@@ -350,7 +405,8 @@ class PaymentService:
                 return_url=None,
                 is_test=is_test,
                 is_cashout=is_cashout,
-                gateway=sandbox.GATEWAY if sandboxed else "LMBTECH",
+                gateway=sandbox.GATEWAY if sandboxed else (kitovu_client.GATEWAY if via_kitovu else "LMBTECH"),
+                gateway_external_id=external_id,
             )
 
         if sandboxed:
@@ -358,6 +414,21 @@ class PaymentService:
                 reference_id, status_message="Sandbox: payout is being delivered (simulated)", redirect_url=None
             )
             return await self._repo.get_by_reference(reference_id)
+
+        if via_kitovu:
+            try:
+                result = await self._kitovu.payout(
+                    external_id=external_id,
+                    amount=amount,
+                    phone=body.recipient_phone,
+                    name=body.recipient_name,
+                    description=body.description or "payout",
+                    callback_url=self._kitovu_callback_url(),
+                )
+            except KitovuError as exc:
+                logger.warning("kitovu_payout_refused", extra={"reference_id": reference_id, "error": exc.message})
+                return await self._fail(reference_id, exc.message)
+            return await self._apply(reference_id, result)
 
         try:
             result = await self._gateway.payout(
@@ -376,21 +447,25 @@ class PaymentService:
 
     async def cashout(self, integrator: dict, destination: str, amount_rwf: int) -> dict:
         """Like LMBTech's "Cashout to MoMo" / "Cashout to Bank".
-        MOMO: LMBTech payout to the integrator's own MTN number (payout fee applies).
+        MOMO: a payout to the integrator's own MoMo number (payout fee applies) -
+        Kitovu when it's on (MTN or Airtel), else LMBTech (MTN only).
         BANK: a request an admin settles by bank transfer; no fee, the amount is
         reserved from the balance until it's paid or rejected."""
         owner = " ".join(filter(None, [integrator.get("first_name"), integrator.get("last_name")])) or integrator["name"]
         if destination == "MOMO":
             phone = integrator.get("phone_number")
             if not phone:
-                raise CashoutSetupError("No MTN number on your account yet - ask Soila Pay to add your phone number.")
+                raise CashoutSetupError("No MoMo number on your account yet - ask Soila Pay to add your phone number.")
             try:
                 body = DisbursementCreate(
                     amount_rwf=amount_rwf, recipient_name=owner, recipient_phone=phone, description="Cash-out to MoMo"
                 )
             except ValueError as exc:
-                raise CashoutSetupError(f"Your phone {phone} can't receive MoMo payouts (MTN 078/079 only).") from exc
-            return await self.create_disbursement(body, integrator, is_cashout=True)
+                raise CashoutSetupError(f"Your phone {phone} can't receive MoMo payouts (MTN 078/079 or Airtel 072/073).") from exc
+            try:
+                return await self.create_disbursement(body, integrator, is_cashout=True)
+            except ChannelUnavailableError as exc:
+                raise CashoutSetupError(f"Cash-outs to Airtel ({phone}) aren't available yet - ask Soila Pay to use an MTN number.") from exc
 
         bank, account = integrator.get("bank_name"), integrator.get("bank_account")
         if not bank or not account:
@@ -582,35 +657,46 @@ class PaymentService:
         recipient_phone: Optional[str] = None,
     ) -> dict:
         """Add a transaction that exists at LMBTech but not here (e.g. made
-        outside Soila Pay, such as a payout sent from LMBTech's dashboard).
-        LMBTech must know it; its status/name come from LMBTech. `amount_rwf`
-        is the NET amount shown on LMBTech's dashboard - their status API
-        reports a different, fee-inclusive figure. Imports belong to no
-        integrator, so they never change an integrator's balance."""
-        payout = direction == DISBURSEMENT
+        outside Soila Pay, such as a payout or a cash-out done in LMBTech's
+        dashboard). Its status/name come from LMBTech when LMBTech's status
+        API knows the reference. A dashboard CASHOUT it doesn't know is still
+        recorded (as done, from what the admin entered) so the books match.
+        `amount_rwf` is the NET amount shown on LMBTech's dashboard. Imports
+        belong to no integrator, so they never change an integrator's balance."""
+        cashout = direction == "CASHOUT"
+        payout = direction == DISBURSEMENT or cashout
         if await self._repo.get_by_reference(reference_id):
             raise DuplicateReferenceError(f"Reference {reference_id} is already in Soila Pay")
         result = await self._gateway.get_status(reference_id)
-        if result is None:
+        if result is None and not cashout:
             raise LMBTechError(f"LMBTech has no transaction with reference {reference_id}")
+        if result is None:  # dashboard cash-out LMBTech's API doesn't expose
+            result = GatewayResult(status="SUCCESS", message="LMBTech cash-out recorded by admin")
         pricing = await self.pricing()
         amount = Decimal(amount_rwf)
-        money = compute_money(amount, None, pricing.payout_cost_percentage if payout else pricing.gateway_cost_percentage)
+        if cashout:
+            money = compute_money(amount, None, Decimal(0))  # the NET amount left LMBTech; no fee is known
+        else:
+            money = compute_money(amount, None, pricing.payout_cost_percentage if payout else pricing.gateway_cost_percentage)
+        method = "BANK" if channel == "BANK" else ("MOMO" if channel == "MTN" else "CARD")
         await self._repo.create(
             reference_id=reference_id,
             direction=DISBURSEMENT if payout else COLLECTION,
             integrator_id=None,
-            method="MOMO" if channel == "MTN" else "CARD",
+            method=method,
             channel=channel,
             amount_rwf=amount,
             money=money,
             customer_name=result.name or "Imported from LMBTech",
             customer_email="",
             customer_phone=recipient_phone,
-            description=description or "Imported from LMBTech",
+            description=description or ("LMBTech cash-out" if cashout else "Imported from LMBTech"),
             return_url=None,
             is_test=self._settings.lmbtech_test_mode,
             imported=True,
+            is_cashout=cashout,
+            # Recorded-by-hand cash-outs are not polled at LMBTech.
+            gateway="MANUAL" if cashout and result.message == "LMBTech cash-out recorded by admin" else "LMBTECH",
         )
         await self._repo.reconcile_state(
             reference_id,

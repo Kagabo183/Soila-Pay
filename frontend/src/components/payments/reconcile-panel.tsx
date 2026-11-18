@@ -17,9 +17,11 @@ export function ReconcilePanel({ onChanged }: { onChanged: () => void }) {
   const [ref, setRef] = React.useState("");
   const [amount, setAmount] = React.useState("");
   const [channel, setChannel] = React.useState("OTHER_CARD");
-  const [direction, setDirection] = React.useState<"COLLECTION" | "DISBURSEMENT">("COLLECTION");
+  const [direction, setDirection] = React.useState<"COLLECTION" | "DISBURSEMENT" | "CASHOUT">("COLLECTION");
   const [phone, setPhone] = React.useState("");
+  const [cashoutTo, setCashoutTo] = React.useState<"MOMO" | "BANK">("MOMO");
   const payout = direction === "DISBURSEMENT";
+  const cashout = direction === "CASHOUT";
   const [importing, setImporting] = React.useState(false);
 
   async function check() {
@@ -40,11 +42,11 @@ export function ReconcilePanel({ onChanged }: { onChanged: () => void }) {
     setImporting(true);
     try {
       const p = await paymentService.importFromLmbtech({
-        referenceId: ref, amountRwf: Math.floor(Number(amount)), channel, direction, recipientPhone: phone,
+        referenceId: ref, amountRwf: Math.floor(Number(amount)), channel, direction, recipientPhone: phone, cashoutTo,
       });
       toast({
-        title: payout ? "Payout imported" : "Imported",
-        description: `${p.referenceId} - ${rwf(p.amountRwf)} - ${p.status}${payout ? " · see Disbursements" : ""}`,
+        title: cashout ? "Cash-out recorded" : payout ? "Payout imported" : "Imported",
+        description: `${p.referenceId} - ${rwf(p.amountRwf)} - ${p.status}${payout || cashout ? " · see Disbursements" : ""}`,
         variant: "success",
       });
       setRef("");
@@ -99,11 +101,12 @@ export function ReconcilePanel({ onChanged }: { onChanged: () => void }) {
       {showImport && (
         <form onSubmit={doImport} className="bk-box mt-3 flex flex-col gap-3 p-3">
           <p className="text-xs">
-            For a transaction you can see on LMBTech&apos;s dashboard but not here - made outside Soila Pay, like a payout you sent from
-            LMBTech directly. Copy its reference from LMBTech and use the NET amount LMBTech shows.
+            For a transaction you can see on LMBTech&apos;s dashboard but not here - made outside Soila Pay, like a payout or a{" "}
+            <b>cash-out</b> (money you withdrew from Soila Pay&apos;s LMBTech balance). Copy its reference from LMBTech and use the NET
+            amount LMBTech shows. A cash-out LMBTech can&apos;t look up is recorded from what you enter.
           </p>
           <div className="flex gap-2">
-            {([["COLLECTION", "Payment in"], ["DISBURSEMENT", "Payout out"]] as const).map(([d, label]) => (
+            {([["COLLECTION", "Payment in"], ["DISBURSEMENT", "Payout out"], ["CASHOUT", "Cash-out"]] as const).map(([d, label]) => (
               <button key={d} type="button" onClick={() => setDirection(d)} aria-pressed={direction === d}
                 className={cn("bk-btn min-h-9 flex-1 px-3 text-xs", direction === d ? "bk-fill-ink" : "bk-fill-paper")}>
                 {label}
@@ -119,7 +122,15 @@ export function ReconcilePanel({ onChanged }: { onChanged: () => void }) {
               Net amount (RWF)
               <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} className="bk-input min-h-10 text-sm" />
             </label>
-            {payout ? (
+            {cashout ? (
+              <label className="flex flex-col gap-1 text-[11px] font-bold uppercase">
+                Cashed out to
+                <select value={cashoutTo} onChange={(e) => setCashoutTo(e.target.value as "MOMO" | "BANK")} className="bk-input min-h-10 text-sm">
+                  <option value="MOMO">MoMo</option>
+                  <option value="BANK">Bank account</option>
+                </select>
+              </label>
+            ) : payout ? (
               <label className="flex flex-col gap-1 text-[11px] font-bold uppercase">
                 Sent to (optional)
                 <input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0788 123 456" className="bk-input min-h-10 text-sm" />

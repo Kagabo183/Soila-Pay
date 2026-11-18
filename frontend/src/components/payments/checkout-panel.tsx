@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { ArrowLeft, Check, Copy, ExternalLink, Loader2, Lock, RotateCcw, Smartphone, Sparkles, X } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Check, Copy, ExternalLink, Loader2, Lock, RotateCcw, Smartphone, Sparkles, UserX, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast-store";
 import {
   paymentErrorMessage,
   paymentService,
+  type MomoLookup,
   type Payment,
   type PaymentChannel,
   type PaymentScope,
@@ -68,6 +69,9 @@ export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false,
   const [description, setDescription] = React.useState("");
   const [touched, setTouched] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  // MoMo confirm step: the wallet's registered name + fees, for this number/amount.
+  const [lookup, setLookup] = React.useState<MomoLookup | null>(null);
+  const [lookupKey, setLookupKey] = React.useState("");
   const [payment, setPayment] = React.useState<Payment | null>(null);
   const [checking, setChecking] = React.useState(false);
   const onChangeRef = React.useRef(onChange);
@@ -81,11 +85,16 @@ export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false,
   const amountNum = Math.floor(Number(amount) || 0);
   const errors = {
     amount: amountNum < MIN_AMOUNT ? (amount ? `Minimum is ${rwf(MIN_AMOUNT)}` : "Enter an amount") : null,
-    name: name.trim().length < 2 ? "Enter the customer's name" : null,
+    name: name.trim().length < 2 && !(isMomo && lookup?.verified) ? "Enter the customer's name" : null,
     email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()) ? null : "Enter a valid email, e.g. name@example.com",
     phone: isMomo ? (phone ? phoneProblem(phone, network) : `Enter the ${networkName} number`) : null,
   };
   const canPay = !Object.values(errors).some(Boolean);
+  // What the confirm step was computed for; editing any of it asks again.
+  const currentKey = `${channel}|${phone}|${amountNum}`;
+  const confirmed = isMomo ? lookup !== null && lookupKey === currentKey : true;
+  // MoMo asks for the wallet first, so the name isn't needed to get there.
+  const canLookup = !errors.amount && !errors.email && !errors.phone;
   // Show errors only after the first try (or as the user fixes a field).
   const show = (key: keyof typeof errors, value: string) => (touched || value ? errors[key] : null);
 
@@ -135,13 +144,28 @@ export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false,
   async function pay(e: React.FormEvent) {
     e.preventDefault();
     setTouched(true);
+    if (isMomo && !confirmed) {
+      if (!canLookup) return;
+      setSubmitting(true);
+      try {
+        const found = await paymentService.momoLookup(scope, { channel, phone, amountRwf: amountNum });
+        setLookup(found);
+        setLookupKey(currentKey);
+        if (found.verified && found.accountName && name.trim().length < 2) setName(found.accountName);
+      } catch (error) {
+        toast({ title: "Could not check that number", description: paymentErrorMessage(error), variant: "error" });
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     if (!canPay) return;
     setSubmitting(true);
     try {
       const p = await paymentService.create(scope, {
         channel,
         amountRwf: amountNum,
-        customerName: name.trim(),
+        customerName: name.trim() || lookup?.accountName || "Customer",
         customerEmail: email.trim(),
         customerPhone: isMomo ? phone : undefined,
         description: description.trim() || undefined,
@@ -280,7 +304,12 @@ export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false,
             </BkField>
 
             <div className="grid gap-5 sm:grid-cols-2">
-              <BkField label="Customer name" htmlFor="pay-name" error={show("name", name)}>
+              <BkField
+                label={isMomo ? "Customer name (optional for MoMo)" : "Customer name"}
+                htmlFor="pay-name"
+                hint={isMomo ? "Filled in from the MoMo account when you continue" : undefined}
+                error={show("name", name)}
+              >
                 <input id="pay-name" className="bk-input" value={name} aria-invalid={!!show("name", name)} onChange={(e) => setName(e.target.value)} placeholder="Aline Uwase" autoComplete="name" />
               </BkField>
               <BkField label="Email" htmlFor="pay-email" hint="The receipt goes here" error={show("email", email)}>
@@ -310,11 +339,32 @@ export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false,
               <input id="pay-desc" className="bk-input" value={description} onChange={(e) => setDescription(e.target.value.slice(0, 60))} placeholder="Order #1024" />
             </BkField>
 
+            {isMomo && confirmed && lookup && (
+              <div className={cn("bk-box p-3 text-sm", lookup.verified ? "bk-fill-green" : "bk-fill-yellow")}>
+                <p className="flex items-center gap-2 font-bold">
+                  {lookup.verified ? <BadgeCheck className="h-4 w-4" /> : <UserX className="h-4 w-4" />}
+                  {lookup.verified ? `Registered name: ${lookup.accountName}` : "Couldn't confirm the name on this number - check it with the customer"}
+                </p>
+                <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1">
+                  <dt>Amount</dt>
+                  <dd className="text-right font-semibold">{rwf(lookup.amountRwf)}</dd>
+                  <dt>Customer fee</dt>
+                  <dd className="text-right font-semibold">{rwf(lookup.customerFeeRwf)}</dd>
+                  <dt className="bk-display font-bold">Customer pays</dt>
+                  <dd className="bk-display text-right font-bold">{rwf(lookup.totalToPayRwf)}</dd>
+                </dl>
+              </div>
+            )}
+
             <button type="submit" disabled={submitting} className="bk-btn bk-fill-green h-14 w-full text-lg">
               {submitting ? (
                 <>
-                  <Loader2 className="h-5 w-5 animate-spin" /> Starting...
+                  <Loader2 className="h-5 w-5 animate-spin" /> {isMomo && !confirmed ? "Checking the number..." : "Starting..."}
                 </>
+              ) : isMomo && !confirmed ? (
+                <>Continue →</>
+              ) : isMomo ? (
+                <>Send the prompt for {rwf(amountNum)} →</>
               ) : (
                 <>Pay {amountNum >= MIN_AMOUNT ? rwf(amountNum) : ""} →</>
               )}

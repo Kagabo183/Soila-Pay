@@ -34,6 +34,8 @@ from app.schemas.payment import (
     PeriodSummary,
     SettleCashout,
     ImportRequest,
+    MomoLookupOut,
+    MomoLookupRequest,
     IntegratorPaymentFee,
     Overview,
     OverviewChannel,
@@ -150,6 +152,8 @@ async def _create_disbursement(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InsufficientBalanceError as exc:
         raise HTTPException(status_code=402, detail=str(exc)) from exc
+    except ChannelUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return payment_out(row, admin=admin)
 
 
@@ -316,6 +320,7 @@ async def _pricing_out(request: Request) -> PaymentPricingOut:
     return PaymentPricingOut(
         gateway_cost_percentage=float(pricing.gateway_cost_percentage),
         momo_cost_percentage=float(pricing.momo_cost_percentage),
+        momo_payout_cost_rwf=float(pricing.momo_payout_cost_rwf),
         default_fee_percentage=float(pricing.default_fee_percentage),
         payout_cost_percentage=float(pricing.payout_cost_percentage),
         payout_default_fee_percentage=float(pricing.payout_default_fee_percentage),
@@ -464,6 +469,12 @@ async def kitovu_callback(request: Request):
     }
 
 
+@router.post("/momo-lookup", response_model=MomoLookupOut)
+async def api_momo_lookup(body: MomoLookupRequest, request: Request, integrator: dict = Depends(_integrator_from_key)):
+    """Before charging a MoMo number: the registered wallet name and fees."""
+    return await _service(request).momo_lookup(body.phone, body.amount_rwf, integrator)
+
+
 @router.get("/{reference_id}", response_model=PaymentOut)
 async def api_get_payment(reference_id: str, request: Request, integrator: dict = Depends(_integrator_from_key)):
     return await _get(request, reference_id, integrator["id"], scoped=True)
@@ -556,6 +567,11 @@ async def portal_overview(
     return await _overview(request, integrator, days, mode)
 
 
+@portal_router.post("/momo-lookup", response_model=MomoLookupOut)
+async def portal_momo_lookup(body: MomoLookupRequest, request: Request, integrator: dict = Depends(_current_integrator)):
+    return await _service(request).momo_lookup(body.phone, body.amount_rwf, integrator)
+
+
 @portal_router.get("/{reference_id}", response_model=PaymentOut)
 async def portal_get_payment(reference_id: str, request: Request, integrator: dict = Depends(_current_integrator)):
     return await _get(request, reference_id, integrator["id"], scoped=True)
@@ -628,6 +644,7 @@ async def admin_set_pricing(body: PaymentPricing, request: Request):
     await _service(request).set_pricing(
         gateway_cost_percentage=Decimal(str(body.gateway_cost_percentage)),
         momo_cost_percentage=Decimal(str(body.momo_cost_percentage)),
+        momo_payout_cost_rwf=Decimal(str(body.momo_payout_cost_rwf)),
         default_fee_percentage=Decimal(str(body.default_fee_percentage)),
         payout_cost_percentage=Decimal(str(body.payout_cost_percentage)),
         payout_default_fee_percentage=Decimal(str(body.payout_default_fee_percentage)),
@@ -676,6 +693,11 @@ async def admin_import(body: ImportRequest, request: Request):
     except LMBTechError as exc:
         raise HTTPException(status_code=404 if "no transaction" in exc.message else 502, detail=exc.message) from exc
     return payment_out(row, admin=True)
+
+
+@admin_router.post("/momo-lookup", response_model=MomoLookupOut)
+async def admin_momo_lookup(body: MomoLookupRequest, request: Request):
+    return await _service(request).momo_lookup(body.phone, body.amount_rwf, None)
 
 
 @admin_router.get("/{reference_id}", response_model=PaymentOut)

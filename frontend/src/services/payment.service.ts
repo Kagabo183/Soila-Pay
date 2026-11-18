@@ -128,6 +128,8 @@ export interface PaymentPricing {
   gatewayCostPercentage: number;
   /** Mobile money collections - Kitovu Pay's cut. */
   momoCostPercentage: number;
+  /** Kitovu Pay's flat fee per mobile money payout (RWF). */
+  momoPayoutCostRwf: number;
   defaultFeePercentage: number;
   payoutCostPercentage: number;
   payoutDefaultFeePercentage: number;
@@ -222,6 +224,7 @@ function pricingFromApi(data: any): PaymentPricing {
   return {
     gatewayCostPercentage: data.gateway_cost_percentage,
     momoCostPercentage: data.momo_cost_percentage ?? 3,
+    momoPayoutCostRwf: data.momo_payout_cost_rwf ?? 400,
     defaultFeePercentage: data.default_fee_percentage,
     payoutCostPercentage: data.payout_cost_percentage,
     payoutDefaultFeePercentage: data.payout_default_fee_percentage,
@@ -255,7 +258,37 @@ function headers(scope: PaymentScope) {
   return scope.kind === "portal" ? { Authorization: `Bearer ${scope.token}` } : undefined;
 }
 
+/** Confirm step before a MoMo charge (like Kitovu's own collection screen). */
+export interface MomoLookup {
+  phone: string;
+  /** The name registered on the wallet; null if it couldn't be checked. */
+  accountName: string | null;
+  verified: boolean;
+  amountRwf: number;
+  customerFeeRwf: number;
+  totalToPayRwf: number;
+  gateway: string;
+}
+
 export const paymentService = {
+  /** Whose MoMo wallet is this, and what will the customer pay? */
+  async momoLookup(scope: PaymentScope, p: { channel: PaymentChannel; phone: string; amountRwf: number }): Promise<MomoLookup> {
+    const { data } = await apiClient.post(
+      `${base(scope)}/momo-lookup`,
+      { channel: p.channel, phone: p.phone, amount_rwf: p.amountRwf },
+      { headers: headers(scope), timeout: 30000 }
+    );
+    return {
+      phone: data.phone,
+      accountName: data.account_name ?? null,
+      verified: !!data.verified,
+      amountRwf: data.amount_rwf,
+      customerFeeRwf: data.customer_fee_rwf ?? 0,
+      totalToPayRwf: data.total_to_pay_rwf ?? data.amount_rwf,
+      gateway: data.gateway,
+    };
+  },
+
   async create(scope: PaymentScope, payload: PaymentCreatePayload): Promise<Payment> {
     const { data } = await apiClient.post(
       base(scope),
@@ -400,6 +433,7 @@ export const paymentService = {
     const { data } = await apiClient.put("/api/v1/admin/payments/pricing", {
       gateway_cost_percentage: p.gatewayCostPercentage,
       momo_cost_percentage: p.momoCostPercentage,
+      momo_payout_cost_rwf: p.momoPayoutCostRwf,
       default_fee_percentage: p.defaultFeePercentage,
       payout_cost_percentage: p.payoutCostPercentage,
       payout_default_fee_percentage: p.payoutDefaultFeePercentage,
@@ -439,18 +473,23 @@ export const paymentService = {
     amountRwf: number;
     channel: string;
     description?: string;
-    /** DISBURSEMENT = a payout sent from LMBTech's dashboard. */
-    direction?: "COLLECTION" | "DISBURSEMENT";
+    /** DISBURSEMENT = a payout sent from LMBTech's dashboard; CASHOUT = money
+     * Soila Pay withdrew from its own LMBTech balance ("Cashout"). */
+    direction?: "COLLECTION" | "DISBURSEMENT" | "CASHOUT";
     recipientPhone?: string;
+    cashoutTo?: "MOMO" | "BANK";
   }): Promise<Payment> {
-    const payout = p.direction === "DISBURSEMENT";
+    const payout = p.direction === "DISBURSEMENT" || p.direction === "CASHOUT";
     const { data } = await apiClient.post("/api/v1/admin/payments/import", {
       reference_id: p.referenceId.trim(),
       amount_rwf: p.amountRwf,
       channel: payout ? "MTN" : p.channel,
       direction: p.direction ?? "COLLECTION",
+      ...(p.direction === "CASHOUT" ? { cashout_to: p.cashoutTo ?? "MOMO" } : {}),
       ...(payout && p.recipientPhone?.trim() ? { recipient_phone: p.recipientPhone.trim() } : {}),
-      description: p.description || (payout ? "Payout imported from LMBTech" : "Imported from LMBTech"),
+      description:
+        p.description ||
+        (p.direction === "CASHOUT" ? "LMBTech cash-out" : payout ? "Payout imported from LMBTech" : "Imported from LMBTech"),
     });
     return fromApi(data);
   },

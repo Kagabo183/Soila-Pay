@@ -37,7 +37,7 @@ function Example({ label, fee, cost, who = "LMBTech" }: { label: string; fee: nu
  * here can't make transactions lose money. */
 export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => void; /** bump to reload (e.g. after an integrator is added) */ reloadToken?: number }) {
   const [pricing, setPricing] = React.useState<PaymentPricing | null>(null);
-  const [form, setForm] = React.useState({ cost: "", momoCost: "", fee: "", payoutCost: "", payoutFee: "" });
+  const [form, setForm] = React.useState({ cost: "", momoCost: "", momoPayoutCost: "", fee: "", payoutCost: "", payoutFee: "" });
   const [saving, setSaving] = React.useState(false);
   const [rows, setRows] = React.useState<Record<number, { collection: string; payout: string }>>({});
   const [rowSaving, setRowSaving] = React.useState<number | null>(null);
@@ -49,6 +49,7 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
       setForm({
         cost: String(p.gatewayCostPercentage),
         momoCost: String(p.momoCostPercentage),
+        momoPayoutCost: String(p.momoPayoutCostRwf),
         fee: String(p.defaultFeePercentage),
         payoutCost: String(p.payoutCostPercentage),
         payoutFee: String(p.payoutDefaultFeePercentage),
@@ -87,6 +88,7 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
       const p = await paymentService.setPricing({
         gatewayCostPercentage: num(form.cost),
         momoCostPercentage: num(form.momoCost),
+        momoPayoutCostRwf: num(form.momoPayoutCost),
         defaultFeePercentage: num(form.fee),
         payoutCostPercentage: num(form.payoutCost),
         payoutDefaultFeePercentage: num(form.payoutFee),
@@ -149,6 +151,13 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
             </BkField>
             <BkField label="Default fee - payouts (%)" htmlFor="pr-pfee" error={payoutError}>
               <input id="pr-pfee" inputMode="decimal" aria-invalid={!!payoutError} className="bk-input" value={form.payoutFee} onChange={field("payoutFee")} />
+            </BkField>
+            <BkField
+              label="Kitovu cost - payouts (RWF each)"
+              htmlFor="pr-mpcost"
+              hint={`Flat, whatever the amount. At a ${num(form.payoutFee) || 0}% fee, payouts under ${rwf(num(form.payoutFee) ? Math.ceil((num(form.momoPayoutCost) * 100) / num(form.payoutFee)) : 0)} lose money.`}
+            >
+              <input id="pr-mpcost" inputMode="decimal" className="bk-input" value={form.momoPayoutCost} onChange={field("momoPayoutCost")} />
             </BkField>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">

@@ -66,11 +66,12 @@ class PaymentCreate(BaseModel):
 
 
 class DisbursementCreate(BaseModel):
-    """Send money to a customer's MTN Mobile Money number (LMBTech payout)."""
+    """Send money to a customer's mobile money number: MTN (078/079) or
+    Airtel (072/073, Kitovu Pay only)."""
 
     amount_rwf: int = Field(..., ge=100, le=5_000_000, description="Whole Rwandan francs")
     recipient_name: str = Field(..., min_length=2, max_length=120)
-    recipient_phone: str = Field(..., description="MTN number, e.g. 0788123456")
+    recipient_phone: str = Field(..., description="MTN or Airtel number, e.g. 0788123456")
     recipient_email: Optional[str] = Field(default=None, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     description: str = Field(default="payout", max_length=120)
     reference_id: Optional[str] = Field(default=None, min_length=6, max_length=60, pattern=r"^[A-Za-z0-9_-]+$")
@@ -90,10 +91,10 @@ class DisbursementCreate(BaseModel):
 
     @field_validator("recipient_phone")
     @classmethod
-    def _mtn_only(cls, v: str) -> str:
+    def _momo_number(cls, v: str) -> str:
         phone = normalize_rw_phone(v)
-        if not phone[4:].startswith(_MTN_PREFIXES):
-            raise ValueError("Payouts go to MTN numbers only (078 or 079)")
+        if not phone[4:].startswith(_MTN_PREFIXES + _AIRTEL_PREFIXES):
+            raise ValueError("Payouts go to MTN (078/079) or Airtel (072/073) numbers")
         return phone
 
 
@@ -204,6 +205,8 @@ class PaymentPricing(BaseModel):
 
     gateway_cost_percentage: float = Field(..., ge=0, lt=100)
     momo_cost_percentage: float = Field(default=3.0, ge=0, lt=100)
+    # Kitovu charges a flat amount per payout (400 RWF on UAT), not a %.
+    momo_payout_cost_rwf: float = Field(default=400.0, ge=0, le=100_000)
     default_fee_percentage: float = Field(..., gt=0, lt=100)
     payout_cost_percentage: float = Field(..., ge=0, lt=100)
     payout_default_fee_percentage: float = Field(..., gt=0, lt=100)
@@ -268,6 +271,36 @@ class ReconcileReport(BaseModel):
     errors: list[dict]
 
 
+class MomoLookupRequest(BaseModel):
+    """Before charging: whose MoMo wallet is this, and what will it cost?"""
+
+    channel: Literal["MTN_MOMO", "AIRTEL_MONEY"] = "MTN_MOMO"
+    phone: str
+    amount_rwf: int = Field(..., ge=100, le=5_000_000)
+
+    @model_validator(mode="after")
+    def _network(self) -> "MomoLookupRequest":
+        phone = normalize_rw_phone(self.phone)
+        if self.channel == "MTN_MOMO" and not phone[4:].startswith(_MTN_PREFIXES):
+            raise ValueError("MTN numbers start with 078 or 079")
+        if self.channel == "AIRTEL_MONEY" and not phone[4:].startswith(_AIRTEL_PREFIXES):
+            raise ValueError("Airtel numbers start with 072 or 073")
+        self.phone = phone
+        return self
+
+
+class MomoLookupOut(BaseModel):
+    phone: str
+    # The name registered on the wallet (None = couldn't be checked).
+    account_name: Optional[str] = None
+    verified: bool = False
+    amount_rwf: int
+    # What the customer pays on top of the amount (Kitovu's subscriber charges).
+    customer_fee_rwf: float = 0
+    total_to_pay_rwf: float
+    gateway: str
+
+
 class ImportRequest(BaseModel):
     """Add a transaction that exists only at LMBTech (made outside Soila Pay)."""
 
@@ -278,9 +311,13 @@ class ImportRequest(BaseModel):
     channel: Literal["VISA", "MASTERCARD", "OTHER_CARD", "MTN"] = "OTHER_CARD"
     description: str = Field(default="Imported from LMBTech", max_length=120)
     # DISBURSEMENT = a payout sent from LMBTech's dashboard (MTN MoMo only).
-    direction: Literal["COLLECTION", "DISBURSEMENT"] = "COLLECTION"
-    # Payouts: who received it (optional - LMBTech's status gives the name).
+    # CASHOUT = money Soila Pay withdrew from its own LMBTech balance using
+    # LMBTech's "Cashout" (to MoMo or to a bank account).
+    direction: Literal["COLLECTION", "DISBURSEMENT", "CASHOUT"] = "COLLECTION"
+    # Payouts / MoMo cash-outs: who received it (optional - LMBTech's status gives the name).
     recipient_phone: Optional[str] = None
+    # Cash-outs only: where the money went.
+    cashout_to: Literal["MOMO", "BANK"] = "MOMO"
 
     @field_validator("recipient_phone", mode="before")
     @classmethod
@@ -291,8 +328,10 @@ class ImportRequest(BaseModel):
 
     @model_validator(mode="after")
     def _payout_is_momo(self) -> "ImportRequest":
-        if self.direction == "DISBURSEMENT":
-            self.channel = "MTN"  # LMBTech payouts only go to MTN MoMo
+        if self.direction == "DISBURSEMENT" or (self.direction == "CASHOUT" and self.cashout_to == "MOMO"):
+            self.channel = "MTN"  # LMBTech payouts / MoMo cash-outs only go to MTN MoMo
+        elif self.direction == "CASHOUT":
+            self.channel = "BANK"
         return self
 
 

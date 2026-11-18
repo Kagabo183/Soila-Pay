@@ -13,6 +13,16 @@ import {
 } from "@/services/payment.service";
 import { BkField, BkPanel, rwf } from "./brutal";
 import { phoneProblem } from "./checkout-panel";
+
+/** MTN always; Airtel only when Kitovu Pay handles mobile money. */
+function payoutPhoneProblem(raw: string, airtel: boolean): string | null {
+  const d = raw.replace(/\D/g, "").replace(/^250/, "").replace(/^0/, "");
+  if (airtel && /^7[23]/.test(d)) return phoneProblem(raw, "AIRTEL");
+  const mtn = phoneProblem(raw, "MTN");
+  return mtn && airtel && d.length === 9 ? "Use an MTN (078/079) or Airtel (072/073) number" : mtn;
+}
+
+const isAirtel = (raw: string) => /^7[23]/.test(raw.replace(/\D/g, "").replace(/^250/, "").replace(/^0/, ""));
 import { PaymentsList } from "./payments-list";
 
 const MIN = 100;
@@ -78,7 +88,7 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
   const balance = summary?.availableBalanceRwf ?? null;
   const errors = {
     name: name.trim().length < 2 ? "Enter the recipient's name" : null,
-    phone: phone ? phoneProblem(phone) : "Enter the MTN number",
+    phone: phone ? payoutPhoneProblem(phone, !!summary?.airtelAvailable) : "Enter the MoMo number",
     amount:
       amountNum < MIN
         ? amount
@@ -144,7 +154,7 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
           <div>
             <h1 className="bk-display text-3xl font-bold uppercase sm:text-4xl">Disbursements</h1>
             <p className="bk-muted mt-1 max-w-xl text-sm">
-              Send money to any MTN Mobile Money number.{" "}
+              Send money to any {summary?.airtelAvailable ? "MTN or Airtel" : "MTN"} Mobile Money number.{" "}
               {admin ? "Payouts come from Soila Pay's LMBTech balance." : "Payouts come from your available balance."}
             </p>
           </div>
@@ -178,7 +188,12 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
                 <BkField label="Recipient name" htmlFor="po-name" error={show("name", name)}>
                   <input id="po-name" className="bk-input" value={name} aria-invalid={!!show("name", name)} onChange={(e) => setName(e.target.value)} placeholder="Aline Uwase" autoComplete="name" />
                 </BkField>
-                <BkField label="MTN phone number" htmlFor="po-phone" hint="Only MTN numbers (078 / 079) can receive payouts" error={show("phone", phone)}>
+                <BkField
+                  label="Mobile money number"
+                  htmlFor="po-phone"
+                  hint={summary?.airtelAvailable ? "MTN (078 / 079) or Airtel (072 / 073)" : "Only MTN numbers (078 / 079) can receive payouts"}
+                  error={show("phone", phone)}
+                >
                   <div className="flex min-w-0">
                     <span className="bk-box bk-fill-yellow bk-display flex shrink-0 items-center border-r-0 px-3 text-sm font-bold">+250</span>
                     <input
@@ -232,7 +247,7 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
                 <p className="bk-display text-2xl font-bold">Send this payout?</p>
                 <dl className="bk-box divide-y-2 divide-[var(--bk-ink)] text-sm">
                   <Row label="To" value={<b>{name.trim()}</b>} />
-                  <Row label="MTN number" value={<span className="font-mono">{phone}</span>} />
+                  <Row label={isAirtel(phone) ? "Airtel number" : "MTN number"} value={<span className="font-mono">{phone}</span>} />
                   <Row label="They receive" value={<b className="bk-display text-base">{rwf(amountNum)}</b>} />
                   {!admin && <Row label={`Fee (${feePct}%)`} value={rwf(fee)} />}
                   {!admin && <Row label="Taken from your balance" value={<b>{rwf(total)}</b>} />}
@@ -275,7 +290,7 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
                   {result.status === "SUCCESS"
                     ? `${rwf(result.amountRwf)} sent to ${result.customerName}.`
                     : result.status === "PENDING"
-                      ? "MTN is processing the payout. This updates by itself."
+                      ? "The mobile money network is processing the payout. This updates by itself."
                       : result.statusMessage || "The payout did not go through. Nothing was taken from the balance."}
                 </p>
                 <p className="bk-muted mt-2 font-mono text-xs">{result.referenceId}</p>

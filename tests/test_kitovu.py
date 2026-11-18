@@ -95,6 +95,9 @@ async def test_service_routes_live_momo_to_kitovu_and_syncs():
         configured, is_uat = True, True
         collected = []
 
+        async def verify_number(self, phone):
+            return "ALINE UWASE"  # the wallet's registered name wins over what was typed
+
         async def collect(self, **kw):
             self.collected.append(kw)
             return GatewayResult(status="PENDING", message="Collection request sent", transaction_id="TXN9")
@@ -125,6 +128,7 @@ async def test_service_routes_live_momo_to_kitovu_and_syncs():
     assert row["gateway"] == "KITOVU" and len(row["gateway_external_id"]) == 6 and row["gateway_external_id"].isdigit()
     assert row["is_test"] is True  # UAT moves no real money
     assert svc._kitovu.collected[0]["phone"] == "+250788123456"
+    assert svc._kitovu.collected[0]["name"] == "ALINE UWASE"
     assert svc._kitovu.collected[0]["callback_url"] == "https://pay.example/api/v1/payments/callback/kitovu"
 
     card = await svc.create(PaymentCreate(amount_rwf=500, channel="VISA", customer_name="Aline", customer_email="a@b.rw"), live)
@@ -174,6 +178,9 @@ async def test_airtel_needs_kitovu_and_momo_uses_kitovu_cost():
     class FakeKitovu:
         configured, is_uat = True, False
 
+        async def verify_number(self, phone):
+            return None  # lookup found nobody -> the typed name is used
+
         async def collect(self, **kw):
             return GatewayResult(status="PENDING")
 
@@ -190,3 +197,75 @@ async def test_airtel_needs_kitovu_and_momo_uses_kitovu_cost():
     assert m.gateway_cost_percentage == Decimal("3") and m.gateway_cost_amount_rwf == Decimal("30.00")
     assert m.margin_amount_rwf == Decimal("30.00")  # 6% fee - 3% Kitovu = 3% margin (was 1% on LMBTech)
     assert (await pricing()).collection_cost_floor == Decimal("5")
+
+
+@respx.mock
+async def test_payout_body_and_fee_quote_send_full_bodies():
+    client = KitovuClient(_settings())
+    route = respx.post(f"{UAT}{kitovu_client.PAYOUT_PATH}").mock(return_value=httpx.Response(200, json={
+        "success": True, "transactionId": "TXN7", "data": {"status": "pending"}}))
+    r = await client.payout(external_id="1234567", amount=Decimal(5000), phone="+250731234567", name="Eric",
+                            description="Refund #9", callback_url="https://pay.example/cb")
+    assert r.status == "PENDING" and r.transaction_id == "TXN7"
+    sent = json.loads(route.calls.last.request.content)
+    assert sent["payment_rail"] == "airtel" and sent["recipient_account_number"] == "731234567"
+    assert sent["externalId"] == "1234567" and sent["description"] == "Refund 9"
+
+    fee = respx.post(f"{UAT}{kitovu_client.PAYOUT_FEE_PATH}").mock(return_value=httpx.Response(201, json={
+        "amount": 5000, "merchant_charges": 400, "subscriber_charges": 0}))
+    assert (await client.fee(Decimal(5000), "+250788123456", payout=True))["merchant_charges"] == 400
+    quoted = json.loads(fee.calls.last.request.content)
+    assert quoted["recipient_account_number"] == "250788123456" and quoted["externalId"] == "1000000"  # Kitovu validates the full body
+
+    respx.post(f"{UAT}{kitovu_client.PAYOUT_PATH}").mock(return_value=httpx.Response(400, json={
+        "success": False, "message": "Insufficient funds", "error": "NOT_ENOUGH_FUNDS"}))
+    with pytest.raises(KitovuError, match="Kitovu account"):
+        await client.payout(external_id="1234568", amount=Decimal(5000), phone="+250788123456", name="E",
+                            description="x", callback_url="https://pay.example/cb")
+    await client.aclose()
+
+
+async def test_service_payout_via_kitovu_uses_flat_cost():
+    from tests.test_sandbox import FakeRepo, _svc
+    from app.schemas.payment import DisbursementCreate
+    from app.services.lmbtech_client import GatewayResult
+    from app.services.payment_service import Pricing
+
+    repo = FakeRepo(balance="100000")
+
+    async def external_id_taken(gateway, ext):
+        return False
+
+    repo.external_id_taken = external_id_taken
+    svc = _svc(repo)
+
+    async def pricing():
+        return Pricing(gateway_cost_percentage=Decimal("5"), default_fee_percentage=Decimal("6"),
+                       payout_cost_percentage=Decimal("5"), payout_default_fee_percentage=Decimal("6"))
+
+    svc.pricing = pricing
+
+    class FakeKitovu:
+        configured, is_uat = True, False
+        sent = []
+
+        async def payout(self, **kw):
+            self.sent.append(kw)
+            return GatewayResult(status="PENDING", transaction_id="TXN7")
+
+    svc._settings = _settings()
+    svc._kitovu = FakeKitovu()
+
+    async def apply(ref, result):
+        return repo.rows[ref]
+
+    svc._apply = apply
+    live = {"id": 7, "name": "Shop", "key_mode": "production", "account_mode": "PRODUCTION",
+            "payment_fee_percentage": None, "payout_fee_percentage": None}
+    row = await svc.create_disbursement(
+        DisbursementCreate(amount_rwf=20000, recipient_name="Aline", recipient_phone="0788123456"), live)
+    m = row["money"]
+    assert row["gateway"] == "KITOVU" and len(row["gateway_external_id"]) == 7 and row["channel"] == "MTN"
+    assert m.gateway_cost_amount_rwf == Decimal("400.00") and m.gateway_cost_percentage == Decimal("2.00")
+    assert m.fee_amount_rwf == Decimal("1200.00") and m.margin_amount_rwf == Decimal("800.00")  # 6% - flat 400
+    assert svc._kitovu.sent[0]["external_id"] == row["gateway_external_id"]
