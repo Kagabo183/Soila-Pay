@@ -307,7 +307,8 @@ export interface ApiIntegrationSettings {
 // GET/POST/PATCH /api/v1/admin/integrators endpoints.
 // ---------------------------------------------------------------------------
 
-export type ProductionStatus = "NOT_SUBMITTED" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+/** SUSPENDED: an admin switched their live access off; only an admin can restore it. */
+export type ProductionStatus = "NOT_SUBMITTED" | "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "SUSPENDED";
 
 export interface Integrator {
   id: number;
@@ -406,6 +407,18 @@ export interface IntegratorUpdateRequest {
   accountMode?: "TEST" | "PRODUCTION";
   /** Admin reset of the integrator's portal password. */
   newPassword?: string;
+  // Everything the integrator fills in (Account page + Go live form).
+  // "" clears an optional value.
+  firstName?: string;
+  lastName?: string;
+  address?: string;
+  location?: string;
+  city?: string;
+  country?: string;
+  bankName?: string;
+  bankAccount?: string;
+  businessLocation?: string;
+  ipWhitelist?: string;
 }
 
 /** Per-integrator totals from the LMBTech ledger (successful rows only). */
@@ -449,6 +462,7 @@ export interface IntegratorSession {
 
 export interface ProductionKycPayload {
   businessLocation: string;
+  /** Optional: when set, the live key only works from these server IPs. */
   ipWhitelist?: string;
 }
 

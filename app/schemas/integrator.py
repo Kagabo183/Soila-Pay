@@ -4,7 +4,9 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, condecimal, field_validator
 
-ProductionStatus = Literal["NOT_SUBMITTED", "PENDING_REVIEW", "APPROVED", "REJECTED"]
+# SUSPENDED = an admin switched their live access off; they can't turn it
+# back on themselves (go-live is refused) until an admin restores it.
+ProductionStatus = Literal["NOT_SUBMITTED", "PENDING_REVIEW", "APPROVED", "REJECTED", "SUSPENDED"]
 AccountMode = Literal["TEST", "PRODUCTION"]
 # What can be uploaded through the KYC endpoint...
 DocumentType = Literal["TAX_CLEARANCE", "RDB_CERTIFICATE"]
@@ -16,6 +18,30 @@ _Pct = condecimal(gt=0, lt=100, decimal_places=2)
 
 _EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 _USERNAME = r"^[A-Za-z0-9._-]+$"
+IP_WHITELIST_MAX = 255  # the integrators.ip_whitelist column
+
+
+def normalize_ip_whitelist(value: Optional[str]) -> str:
+    """"203.0.113.10, 203.0.113.11" -> the same list, cleaned. Every entry
+    must be a single IPv4/IPv6 address (no ranges or hostnames - the live-key
+    check compares exact addresses). Returns "" when the list is empty."""
+    import ipaddress
+
+    ips: list[str] = []
+    for part in (value or "").replace(";", ",").replace("\n", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ip = str(ipaddress.ip_address(part))
+        except ValueError:
+            raise ValueError(f"{part!r} is not a valid IP address - list your server IPs, e.g. 203.0.113.10") from None
+        if ip not in ips:
+            ips.append(ip)
+    cleaned = ", ".join(ips)
+    if len(cleaned) > IP_WHITELIST_MAX:
+        raise ValueError("Too many IP addresses - the list can be at most 255 characters")
+    return cleaned
 
 
 class ProfileFields(BaseModel):
@@ -85,6 +111,23 @@ class IntegratorUpdate(BaseModel):
     account_mode: Optional[AccountMode] = None
     # Admin reset for an integrator who forgot their password.
     new_password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    # Everything the integrator fills in themselves (Account page + Go live
+    # form), so an admin can correct any of it. "" clears an optional value.
+    first_name: Optional[str] = Field(default=None, max_length=80)
+    last_name: Optional[str] = Field(default=None, max_length=80)
+    address: Optional[str] = Field(default=None, max_length=191)
+    location: Optional[str] = Field(default=None, max_length=120)
+    city: Optional[str] = Field(default=None, max_length=80)
+    country: Optional[str] = Field(default=None, max_length=80)
+    bank_name: Optional[str] = Field(default=None, max_length=120)
+    bank_account: Optional[str] = Field(default=None, max_length=60, pattern=r"^[0-9A-Za-z -]*$")
+    business_location: Optional[str] = Field(default=None, max_length=255)
+    ip_whitelist: Optional[str] = None
+
+    @field_validator("ip_whitelist")
+    @classmethod
+    def _ips(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else normalize_ip_whitelist(v)
 
 
 class ProfileUpdate(BaseModel):
@@ -194,8 +237,32 @@ class ProductionKycSubmitRequest(BaseModel):
     uploaded (POST /production/documents) before this is accepted - see the
     has_all_required check in the submit route."""
 
-    business_location: str = Field(..., min_length=1)
+    business_location: str = Field(..., min_length=1, max_length=255)
+    # Optional: when set, the live key only works from these server IPs, so
+    # a leaked key is useless anywhere else. Empty = any IP.
     ip_whitelist: Optional[str] = None
+
+    @field_validator("business_location", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+    @field_validator("ip_whitelist")
+    @classmethod
+    def _ips(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_ip_whitelist(v) or None
+
+
+class IpWhitelistUpdate(BaseModel):
+    """A live integrator changing its own server IPs (e.g. after moving
+    hosts). Empty = the live key works from any IP."""
+
+    ip_whitelist: str = ""
+
+    @field_validator("ip_whitelist")
+    @classmethod
+    def _ips(cls, v: str) -> str:
+        return normalize_ip_whitelist(v)
 
 
 class ProductionReviewDecision(BaseModel):

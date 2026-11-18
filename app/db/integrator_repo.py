@@ -207,7 +207,36 @@ class IntegratorRepo:
     # -- Profile (portal self-service + admin-only fields) ----------------------
 
     PROFILE_FIELDS = ("first_name", "last_name", "name", "address", "location", "city", "country", "bank_name", "bank_account")
-    ADMIN_FIELDS = ("email", "phone_number", "username", "account_mode")
+    # Admins can change everything the integrator can, plus login identity,
+    # Account Mode and the Go live answers.
+    ADMIN_FIELDS = PROFILE_FIELDS + (
+        "email", "phone_number", "username", "account_mode", "business_location", "ip_whitelist",
+    )
+
+    async def suspend_production(self, integrator_id: int, reason: str) -> Optional[dict]:
+        """Switch live access off: the production key stops working at once
+        (account_mode TEST) and stays off until an admin restores it - the
+        integrator can't re-enable it through the Go live form. The key itself
+        is kept, so restoring doesn't break their integration."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE integrators
+                    SET production_status = 'SUSPENDED',
+                        production_rejection_reason = %s,
+                        account_mode = 'TEST'
+                    WHERE id = %s
+                    """,
+                    (reason, integrator_id),
+                )
+        return await self.get_by_id(integrator_id)
+
+    async def set_ip_whitelist(self, integrator_id: int, ip_whitelist: str) -> Optional[dict]:
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("UPDATE integrators SET ip_whitelist = %s WHERE id = %s", (ip_whitelist or None, integrator_id))
+        return await self.get_by_id(integrator_id)
 
     async def update_profile(self, integrator_id: int, fields: dict, *, allowed: tuple[str, ...]) -> Optional[dict]:
         """Update only whitelisted columns (portal: PROFILE_FIELDS; admin

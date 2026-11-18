@@ -353,4 +353,15 @@ export const integratorPortalService = {
     );
     return integratorFromApi(data);
   },
+
+  /** PUT /api/v1/integrator-portal/production/ip-whitelist - change the
+   * server IPs the live key works from (at least one must stay). */
+  async updateIpWhitelist(token: string, ipWhitelist: string): Promise<Integrator> {
+    const { data } = await apiClient.put(
+      "/api/v1/integrator-portal/production/ip-whitelist",
+      { ip_whitelist: ipWhitelist },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return integratorFromApi(data);
+  },
 };

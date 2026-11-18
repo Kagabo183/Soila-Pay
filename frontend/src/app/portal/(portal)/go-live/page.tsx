@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Rocket, CheckCircle2, Circle, Clock, ListChecks, XCircle, Upload } from "lucide-react";
+import { Rocket, CheckCircle2, Circle, Clock, ListChecks, XCircle, Upload, Ban, Server } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -116,7 +116,7 @@ export default function PortalGoLivePage() {
     try {
       const updated = await integratorPortalService.submitProductionKyc(token, {
         businessLocation,
-        ipWhitelist: ipWhitelist || undefined,
+        ipWhitelist: ipWhitelist.trim() || undefined,
       });
       updateIntegrator(updated);
       toast({
@@ -142,6 +142,29 @@ export default function PortalGoLivePage() {
               <CheckCircle2 className="h-4 w-4" /> You&apos;re live
             </CardTitle>
             <CardDescription>Your production key is active. Use it for real collections.</CardDescription>
+          </CardHeader>
+        </Card>
+        <ServerIpsCard />
+      </div>
+    );
+  }
+
+  if (integrator.productionStatus === "SUSPENDED") {
+    return (
+      <div className="flex max-w-2xl flex-col gap-6">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">Go Live</h1>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-destructive">
+              <Ban className="h-4 w-4" /> Live access suspended
+            </CardTitle>
+            <CardDescription>
+              Soila Pay has switched off your production key
+              {integrator.productionRejectionReason ? `: ${integrator.productionRejectionReason}` : "."} Your sandbox key
+              still works for testing. Contact Soila Pay support to have live access restored.
+            </CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -235,9 +258,10 @@ export default function PortalGoLivePage() {
               token={token} uploaded={taxDoc} onUploaded={handleDocUploaded} />
             <DocumentUploadField label="RDB certificate" documentType="RDB_CERTIFICATE"
               token={token} uploaded={rdbDoc} onUploaded={handleDocUploaded} />
-            <Input label="IP whitelist (optional)" value={ipWhitelist}
+            <Input label="Server IP addresses (optional)" value={ipWhitelist}
               onChange={(e) => setIpWhitelist(e.target.value)}
-              placeholder="203.0.113.10, 203.0.113.11" />
+              placeholder="203.0.113.10, 203.0.113.11"
+              hint="Recommended: the public IPs of the servers that call Soila Pay, separated by commas. If set, your live key only works from these. You can change them later." />
             <div>
               <Button type="submit" loading={submitting} disabled={!checklist?.ready} className="w-fit">
                 {auto ? <><Rocket className="h-4 w-4" /> Go live now</> : "Submit for review"}
@@ -250,5 +274,56 @@ export default function PortalGoLivePage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/** Live integrators: the server IPs their production key works from. */
+function ServerIpsCard() {
+  const integrator = useIntegratorPortalStore((s) => s.integrator);
+  const token = useIntegratorPortalStore((s) => s.token);
+  const updateIntegrator = useIntegratorPortalStore((s) => s.updateIntegrator);
+  const [draft, setDraft] = React.useState(integrator?.ipWhitelist ?? "");
+  const [saving, setSaving] = React.useState(false);
+  if (!integrator || !token) return null;
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!token) return;
+    setSaving(true);
+    try {
+      const updated = await integratorPortalService.updateIpWhitelist(token, draft);
+      updateIntegrator(updated);
+      setDraft(updated.ipWhitelist ?? "");
+      toast({ title: "Server IPs saved", description: "Your live key now works only from these IPs.", variant: "success" });
+    } catch (err) {
+      toast({ title: err instanceof Error ? err.message : "Could not save", variant: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Server className="h-4 w-4" /> Server IP addresses
+        </CardTitle>
+        <CardDescription>
+          {integrator.ipWhitelist
+            ? "Your live key only works from these IPs. Update them before you move to a new server."
+            : "Not set - your live key currently works from any IP. Add your servers' IPs to lock it down."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={save} className="flex flex-col gap-3">
+          <Input label="IP addresses" value={draft} onChange={(e) => setDraft(e.target.value)}
+            placeholder="203.0.113.10, 203.0.113.11"
+            hint="Leave empty to allow any IP." />
+          <Button type="submit" loading={saving} disabled={draft.trim() === (integrator.ipWhitelist ?? "")} className="w-fit">
+            Save IPs
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

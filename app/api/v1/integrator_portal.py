@@ -15,6 +15,7 @@ from app.schemas.integrator import (
     IntegratorOut,
     IntegratorSessionResponse,
     IntegratorSignupRequest,
+    IpWhitelistUpdate,
     PasswordChange,
     ProductionKycSubmitRequest,
     ProfileUpdate,
@@ -174,6 +175,11 @@ async def upload_production_document(
     """Real file upload (not a text reference/URL) - re-uploading the same
     document_type replaces the previous file. See the "Known simplification"
     note in the README: stored as a DB blob, no virus scanning or S3."""
+    return await store_kyc_document(request, integrator["id"], document_type, file)
+
+
+async def store_kyc_document(request: Request, integrator_id: int, document_type: str, file: UploadFile) -> IntegratorDocumentOut:
+    """Validate and save a Go live document (portal upload and admin upload)."""
     if file.content_type not in ALLOWED_DOCUMENT_CONTENT_TYPES:
         raise HTTPException(
             status_code=400,
@@ -187,13 +193,13 @@ async def upload_production_document(
 
     document_repo = request.app.state.integrator_document_repo
     await document_repo.upsert(
-        integrator["id"],
+        integrator_id,
         document_type,
         file.filename or f"{document_type}.dat",
         file.content_type,
         data,
     )
-    doc = await document_repo.get(integrator["id"], document_type)
+    doc = await document_repo.get(integrator_id, document_type)
     return IntegratorDocumentOut(
         document_type=doc["document_type"],
         file_name=doc["file_name"],
@@ -259,6 +265,11 @@ async def submit_production_kyc(
     """Go live. With INTEGRATOR_AUTO_GO_LIVE (default) an integrator whose
     checklist is complete is switched to Production at once - like LMBTech,
     no waiting. Otherwise it's queued for an admin to review."""
+    if integrator["production_status"] == "SUSPENDED":
+        raise HTTPException(
+            status_code=403,
+            detail="Your live access was suspended by Soila Pay - contact support to have it restored",
+        )
     checklist = await _go_live_checklist(request, integrator)
     if not checklist["ready"]:
         missing = "; ".join(i["label"] for i in checklist["items"] if not i["done"])
@@ -279,6 +290,16 @@ async def submit_production_kyc(
         row = await repo.approve_production(integrator["id"])
         logger.info("integrator_auto_go_live", extra={"integrator_id": integrator["id"]})
     return row
+
+
+@router.put("/production/ip-whitelist", response_model=IntegratorOut)
+async def update_my_ip_whitelist(
+    body: IpWhitelistUpdate, request: Request, integrator: dict = Depends(_current_integrator)
+):
+    """Change the server IPs the live key works from (e.g. after moving
+    hosts). Takes effect on the next API call."""
+    logger.warning("integrator_ip_whitelist_changed", extra={"integrator_id": integrator["id"]})
+    return await request.app.state.integrator_repo.set_ip_whitelist(integrator["id"], body.ip_whitelist)
 
 
 # Transaction history now lives in the LMBTech ledger:

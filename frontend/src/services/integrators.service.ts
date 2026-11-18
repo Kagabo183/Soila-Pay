@@ -4,6 +4,7 @@ import { generateIntegrators } from "@/data/mock/generators";
 import { mockDocumentStore } from "@/data/mock/mock-document-store";
 import { EMPTY_PROFILE, integratorFromApi } from "@/lib/integrator";
 import { profileInputToApi } from "@/types/api";
+import type { GoLiveChecklist } from "@/services/integrator-portal.service";
 import type {
   DocumentType,
   Integrator,
@@ -169,8 +170,50 @@ export const integratorsService = {
       ...(payload.username !== undefined ? { username: payload.username } : {}),
       ...(payload.accountMode !== undefined ? { account_mode: payload.accountMode } : {}),
       ...(payload.newPassword ? { new_password: payload.newPassword } : {}),
+      ...(payload.firstName !== undefined ? { first_name: payload.firstName } : {}),
+      ...(payload.lastName !== undefined ? { last_name: payload.lastName } : {}),
+      ...(payload.address !== undefined ? { address: payload.address } : {}),
+      ...(payload.location !== undefined ? { location: payload.location } : {}),
+      ...(payload.city !== undefined ? { city: payload.city } : {}),
+      ...(payload.country !== undefined ? { country: payload.country } : {}),
+      ...(payload.bankName !== undefined ? { bank_name: payload.bankName } : {}),
+      ...(payload.bankAccount !== undefined ? { bank_account: payload.bankAccount } : {}),
+      ...(payload.businessLocation !== undefined ? { business_location: payload.businessLocation } : {}),
+      ...(payload.ipWhitelist !== undefined ? { ip_whitelist: payload.ipWhitelist } : {}),
     });
     return fromApi(data);
+  },
+
+  /** POST /api/v1/admin/integrators/{id}/suspend-production - their live key
+   * stops working now; they can't turn it back on themselves. */
+  async suspendProduction(id: number, reason: string): Promise<Integrator> {
+    const { data } = await apiClient.post(`/api/v1/admin/integrators/${id}/suspend-production`, { reason });
+    return fromApi(data);
+  },
+
+  /** GET /api/v1/admin/integrators/{id}/checklist - the Go live checklist exactly as the integrator sees it. */
+  async goLiveChecklist(id: number): Promise<GoLiveChecklist> {
+    const { data } = await apiClient.get(`/api/v1/admin/integrators/${id}/checklist`);
+    return { items: data.items, ready: data.ready, autoGoLive: data.auto_go_live };
+  },
+
+  /** Opens a stored document in a new tab (fetched with the admin auth header). */
+  async openDocument(id: number, documentType: DocumentType): Promise<void> {
+    const tab = window.open("", "_blank");
+    const { data } = await apiClient.get(`/api/v1/admin/integrators/${id}/documents/${documentType}`, { responseType: "blob" });
+    const url = URL.createObjectURL(data);
+    if (tab) tab.location.href = url;
+    else window.open(url, "_blank");
+  },
+
+  /** POST /api/v1/admin/integrators/{id}/documents - upload/replace a Go live document for them. */
+  async uploadDocument(id: number, documentType: DocumentType, file: File): Promise<void> {
+    const form = new FormData();
+    form.append("document_type", documentType);
+    form.append("file", file);
+    await apiClient.post(`/api/v1/admin/integrators/${id}/documents`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
   },
 
   /** The integrator's profile picture as an object URL (admin auth header

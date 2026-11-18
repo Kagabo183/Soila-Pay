@@ -2,12 +2,15 @@ import logging
 from decimal import Decimal
 
 import pymysql
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from app.api.v1.integrator_portal import _go_live_checklist as go_live_checklist
+from app.api.v1.integrator_portal import store_kyc_document
 from app.exceptions import FineractError
 from app.schemas.integrator import (
+    DocumentType,
     StoredDocumentType,
     IntegratorCreate,
     IntegratorDocumentOut,
@@ -113,11 +116,21 @@ async def update_integrator(integrator_id: int, body: IntegratorUpdate, request:
         payout_fee_percentage=body.payout_fee_percentage,
         clear_payout_fee=body.clear_payout_fee,
     )
+    if body.account_mode == "PRODUCTION" and existing["account_mode"] != "PRODUCTION":
+        if not existing.get("production_api_key"):
+            raise HTTPException(status_code=400, detail="They have no production key yet - approve their Go live request first")
+        if existing["production_status"] == "SUSPENDED":
+            raise HTTPException(status_code=400, detail="Their live access is suspended - use Restore live instead")
     if body.new_password:
         await repo.set_password_hash(integrator_id, hash_password(body.new_password))
         logger.warning("integrator_password_reset_by_admin", extra={"integrator_id": integrator_id})
-    # Admin-only identity fields + Account Mode (Test / Production).
-    admin_fields = body.model_dump(include={"email", "phone_number", "username", "account_mode"}, exclude_unset=True)
+    # Identity, Account Mode, profile and Go live answers ("" clears a value).
+    admin_fields = body.model_dump(
+        include=set(repo.ADMIN_FIELDS) - {"name"},  # name is saved by repo.update above
+        exclude_unset=True,
+    )
+    if "ip_whitelist" in admin_fields and admin_fields["ip_whitelist"] != (existing.get("ip_whitelist") or ""):
+        logger.warning("integrator_ip_whitelist_changed_by_admin", extra={"integrator_id": integrator_id})
     if admin_fields.get("phone_number"):
         from app.schemas.payment import normalize_rw_phone
 
@@ -157,6 +170,43 @@ async def reject_integrator_production(
     if existing is None:
         raise HTTPException(status_code=404, detail="Integrator not found")
     return await repo.reject_production(integrator_id, body.reason or "Rejected by operator")
+
+
+@router.post("/integrators/{integrator_id}/suspend-production", response_model=IntegratorOut)
+async def suspend_integrator_production(integrator_id: int, body: ProductionReviewDecision, request: Request):
+    """Switch an integrator's live access off now. Their production key stops
+    working immediately (sandbox keeps working) and they can't turn it back
+    on themselves. Restore with approve-production - same key, no re-integration."""
+    repo = request.app.state.integrator_repo
+    existing = await repo.get_by_id(integrator_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Integrator not found")
+    reason = (body.reason or "").strip() or "Suspended by Soila Pay"
+    logger.warning("integrator_live_suspended", extra={"integrator_id": integrator_id})
+    return await repo.suspend_production(integrator_id, reason[:255])
+
+
+@router.get("/integrators/{integrator_id}/checklist")
+async def integrator_go_live_checklist(integrator_id: int, request: Request):
+    """The same Go live checklist the integrator sees in their portal."""
+    existing = await request.app.state.integrator_repo.get_by_id(integrator_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Integrator not found")
+    return await go_live_checklist(request, existing)
+
+
+@router.post("/integrators/{integrator_id}/documents", response_model=IntegratorDocumentOut, status_code=201)
+async def upload_integrator_document(
+    integrator_id: int,
+    request: Request,
+    document_type: DocumentType = Form(...),
+    file: UploadFile = File(...),
+):
+    """Upload or replace a Go live document on the integrator's behalf."""
+    if await request.app.state.integrator_repo.get_by_id(integrator_id) is None:
+        raise HTTPException(status_code=404, detail="Integrator not found")
+    logger.info("integrator_document_uploaded_by_admin", extra={"integrator_id": integrator_id, "type": document_type})
+    return await store_kyc_document(request, integrator_id, document_type, file)
 
 
 @router.get("/integrators/{integrator_id}/documents", response_model=list[IntegratorDocumentOut])

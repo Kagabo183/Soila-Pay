@@ -4,9 +4,9 @@ import * as React from "react";
 import { Plus, Pencil, Copy, TrendingUp, ArrowUpRight, Users, Wallet, FileText } from "lucide-react";
 import { PricingPanel } from "@/components/payments/pricing-panel";
 import { NewIntegratorDialog } from "@/components/integrators/new-integrator-dialog";
+import { EditIntegratorDialog } from "@/components/integrators/edit-integrator-dialog";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -32,17 +32,8 @@ export default function IntegratorsPage() {
   const [summary, setSummary] = React.useState<IntegratorSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  const [modalOpen, setModalOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Integrator | null>(null);
-  const [nameDraft, setNameDraft] = React.useState("");
-  // Admin-only identity fields + Account Mode (edit only).
-  const [emailDraft, setEmailDraft] = React.useState("");
-  const [usernameDraft, setUsernameDraft] = React.useState("");
-  const [modeDraft, setModeDraft] = React.useState<"TEST" | "PRODUCTION">("TEST");
-  const [phoneDraft, setPhoneDraft] = React.useState("");
-  const [passwordDraft, setPasswordDraft] = React.useState("");
   const [createOpen, setCreateOpen] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
   const [revealedKey, setRevealedKey] = React.useState<string | null>(null);
   const [documentsByIntegrator, setDocumentsByIntegrator] = React.useState<Record<number, IntegratorDocument[]>>({});
 
@@ -89,53 +80,6 @@ export default function IntegratorsPage() {
 
   function openEdit(integrator: Integrator) {
     setEditing(integrator);
-    setNameDraft(integrator.name);
-    setEmailDraft(integrator.email ?? "");
-    setPhoneDraft(integrator.phoneNumber ?? "");
-    setUsernameDraft(integrator.username ?? "");
-    setModeDraft(integrator.accountMode);
-    setPasswordDraft("");
-    setModalOpen(true);
-  }
-
-  async function handleSaveIntegrator() {
-    // Fees are set in the Pricing section below (collections + payouts).
-    if (!nameDraft.trim()) {
-      toast({ title: "Check the form", description: "A name is required.", variant: "error" });
-      return;
-    }
-    if (passwordDraft && passwordDraft.length < 8) {
-      toast({ title: "Password too short", description: "Use at least 8 characters.", variant: "error" });
-      return;
-    }
-    setSaving(true);
-    try {
-      if (editing) {
-        if (modeDraft === "PRODUCTION" && editing.accountMode !== "PRODUCTION" && !editing.productionApiKey) {
-          toast({ title: "Approve Go Live first", description: "Production mode needs a production key, issued when you approve their Go Live request.", variant: "error" });
-          return;
-        }
-        await integratorsService.update(editing.id, {
-          name: nameDraft,
-          ...(emailDraft.trim() && emailDraft.trim() !== (editing.email ?? "") ? { email: emailDraft.trim() } : {}),
-          ...(phoneDraft.trim() && phoneDraft.trim() !== (editing.phoneNumber ?? "") ? { phoneNumber: phoneDraft.trim() } : {}),
-          ...(usernameDraft.trim() && usernameDraft.trim() !== (editing.username ?? "") ? { username: usernameDraft.trim() } : {}),
-          ...(modeDraft !== editing.accountMode ? { accountMode: modeDraft } : {}),
-          ...(passwordDraft ? { newPassword: passwordDraft } : {}),
-        });
-        toast({
-          title: "Integrator updated",
-          description: passwordDraft ? "New password set - share it with them securely." : undefined,
-          variant: "success",
-        });
-      }
-      setModalOpen(false);
-      await refresh();
-    } catch (err) {
-      toast({ title: err instanceof Error ? err.message : "Save failed", variant: "error" });
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function handleToggleActive(integrator: Integrator) {
@@ -270,7 +214,7 @@ export default function IntegratorsPage() {
                     ? "success"
                     : row.productionStatus === "PENDING_REVIEW"
                       ? "warning"
-                      : row.productionStatus === "REJECTED"
+                      : row.productionStatus === "REJECTED" || row.productionStatus === "SUSPENDED"
                         ? "destructive"
                         : "outline"
                 }
@@ -422,73 +366,9 @@ export default function IntegratorsPage() {
         </CardContent>
       </Card>
 
-      <Modal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        title={editing ? `Edit ${editing.name}` : "New Integrator"}
-        description={
-          editing
-            ? "Rename the integrator. Fees are set in the Pricing section."
-            : "Issues a new API key the integrator sends as the Integrator-Key header."
-        }
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveIntegrator} loading={saving}>
-              {editing ? "Save changes" : "Create integrator"}
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-4">
-          <Input
-            label="Name"
-            value={nameDraft}
-            onChange={(e) => setNameDraft(e.target.value)}
-            placeholder="Acme Shop"
-            hint="Fees are set in the Pricing section of this page."
-          />
-          {editing && (
-            <>
-              <Input label="Email" type="email" value={emailDraft} onChange={(e) => setEmailDraft(e.target.value)} hint="Their login. Only admins can change it." />
-              <Input label="Phone" value={phoneDraft} onChange={(e) => setPhoneDraft(e.target.value)} placeholder="+250788123456" />
-              <Input label="Username" value={usernameDraft} onChange={(e) => setUsernameDraft(e.target.value)} hint="Letters, numbers, . _ - (they can log in with it)" />
-              <div className="flex flex-col gap-1.5">
-                <span className="text-sm font-semibold text-foreground">Account Mode</span>
-                <div className="flex gap-2">
-                  {(["TEST", "PRODUCTION"] as const).map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setModeDraft(m)}
-                      aria-pressed={modeDraft === m}
-                      className={`nb-press flex-1 rounded-sm border-2 border-[var(--nb-ink)] px-3 py-2 text-sm font-bold shadow-sm ${
-                        modeDraft === m ? (m === "PRODUCTION" ? "bg-[var(--bk-green)] text-[#111]" : "bg-[var(--bk-yellow)] text-[#111]") : "bg-card"
-                      }`}
-                    >
-                      {m === "TEST" ? "Test Mode" : "Production"}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">Test: only their sandbox key works. Production: their production key works too.</p>
-              </div>
-            </>
-          )}
-          {editing && (
-            <Input
-              label="Set a new password (optional)"
-              type="password"
-              value={passwordDraft}
-              onChange={(e) => setPasswordDraft(e.target.value)}
-              placeholder="Leave empty to keep their current password"
-              hint="For an integrator who forgot theirs. At least 8 characters."
-              autoComplete="new-password"
-            />
-          )}
-        </div>
-      </Modal>
+      {editing && (
+        <EditIntegratorDialog integrator={editing} onClose={() => setEditing(null)} onSaved={refresh} />
+      )}
 
       {createOpen && (
         <NewIntegratorDialog

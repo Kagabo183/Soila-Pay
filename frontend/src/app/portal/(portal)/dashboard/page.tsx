@@ -12,6 +12,7 @@ const STATUS_LABEL = {
   PENDING_REVIEW: "Under review",
   APPROVED: "Live",
   REJECTED: "Rejected",
+  SUSPENDED: "Suspended",
 } as const;
 
 function KeyRow({ label, value }: { label: string; value: string }) {

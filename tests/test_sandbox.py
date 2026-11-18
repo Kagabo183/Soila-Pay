@@ -197,3 +197,30 @@ async def test_production_key_respects_ip_whitelist():
     assert await _integrator_from_key(request_from("198.51.100.7", sandbox_key), "k") is sandbox_key
     open_live = {**live, "ip_whitelist": None}
     assert await _integrator_from_key(request_from("198.51.100.7", open_live), "k") is open_live
+    # IPv4 seen through an IPv6 socket still matches.
+    assert await _integrator_from_key(request_from("::ffff:203.0.113.10", live), "k") is live
+    # A suspended account's live key is refused even from a whitelisted IP.
+    suspended = {**live, "production_status": "SUSPENDED", "account_mode": "TEST"}
+    with pytest.raises(HTTPException) as exc:
+        await _integrator_from_key(request_from("203.0.113.10", suspended), "k")
+    assert exc.value.status_code == 403 and "suspended" in exc.value.detail
+
+
+def test_go_live_server_ips_are_optional_but_valid():
+    from pydantic import ValidationError
+
+    from app.schemas.integrator import IntegratorUpdate, IpWhitelistUpdate, ProductionKycSubmitRequest
+
+    ok = ProductionKycSubmitRequest(business_location=" Kigali ", ip_whitelist="203.0.113.10; 2001:db8::1 ,203.0.113.10")
+    assert ok.ip_whitelist == "203.0.113.10, 2001:db8::1" and ok.business_location == "Kigali"
+    for bad in ("example.com", "203.0.113.0/24", "999.1.1.1"):
+        with pytest.raises(ValidationError):
+            ProductionKycSubmitRequest(business_location="Kigali", ip_whitelist=bad)
+    # Optional: empty or missing = the live key works from any IP.
+    assert ProductionKycSubmitRequest(business_location="Kigali").ip_whitelist is None
+    assert ProductionKycSubmitRequest(business_location="Kigali", ip_whitelist=" , ").ip_whitelist is None
+    assert IpWhitelistUpdate(ip_whitelist="").ip_whitelist == ""
+    # Admins may clear it (their call), and get the same validation otherwise.
+    assert IntegratorUpdate(ip_whitelist="").ip_whitelist == ""
+    with pytest.raises(ValidationError):
+        IntegratorUpdate(ip_whitelist="not-an-ip")

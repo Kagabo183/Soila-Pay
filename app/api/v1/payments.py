@@ -297,6 +297,20 @@ async def _pricing_out(request: Request) -> PaymentPricingOut:
 
 # ---------------------------------------------------------------- Integrator API
 
+def _canonical_ip(value: str) -> str:
+    """One spelling per address, so "::ffff:203.0.113.10" (IPv4 seen through
+    an IPv6 socket) matches a whitelisted "203.0.113.10"."""
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return value.strip()
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return str(ip)
+
+
 async def _integrator_from_key(
     request: Request, integrator_key: str = Header(..., alias="Integrator-Key", min_length=1)
 ) -> dict:
@@ -305,6 +319,8 @@ async def _integrator_from_key(
         raise HTTPException(status_code=401, detail="Unknown Integrator-Key")
     if not integrator["is_active"]:
         raise HTTPException(status_code=403, detail="Integrator account is disabled")
+    if integrator.get("key_mode") == "production" and integrator.get("production_status") == "SUSPENDED":
+        raise HTTPException(status_code=403, detail="Live access for this account is suspended - contact Soila Pay support")
     if integrator.get("key_mode") == "production" and integrator.get("account_mode") != "PRODUCTION":
         raise HTTPException(
             status_code=403,
@@ -312,8 +328,8 @@ async def _integrator_from_key(
         )
     # The live key only works from the integrator's own servers, if they
     # listed any at go-live. Sandbox keys stay usable from anywhere.
-    allowed = {ip.strip() for ip in (integrator.get("ip_whitelist") or "").replace(";", ",").split(",") if ip.strip()}
-    client_ip = request.client.host if request.client else None
+    allowed = {_canonical_ip(ip) for ip in (integrator.get("ip_whitelist") or "").replace(";", ",").split(",") if ip.strip()}
+    client_ip = _canonical_ip(request.client.host) if request.client else None
     if integrator.get("key_mode") == "production" and allowed and client_ip not in allowed:
         raise HTTPException(status_code=403, detail=f"This production key can't be used from {client_ip} - it isn't in your IP whitelist")
     return integrator

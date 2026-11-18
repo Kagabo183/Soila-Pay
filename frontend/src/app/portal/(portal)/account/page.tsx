@@ -11,7 +11,7 @@ import { integratorPortalService } from "@/services/integrator-portal.service";
 import { useIntegratorPortalStore } from "@/store/integrator-portal-store";
 import type { IntegratorDocument } from "@/types/api";
 
-const TYPE_LABEL = { NOT_SUBMITTED: "Not submitted", PENDING_REVIEW: "Pending", APPROVED: "Approved", REJECTED: "Rejected" } as const;
+const TYPE_LABEL = { NOT_SUBMITTED: "Not submitted", PENDING_REVIEW: "Pending", APPROVED: "Approved", REJECTED: "Rejected", SUSPENDED: "Suspended" } as const;
 const MAX_FILE = 5 * 1024 * 1024;
 
 function ReadOnly({ label, value, note }: { label: string; value: string | null; note: string }) {
@@ -205,7 +205,7 @@ export default function PortalAccountPage() {
     {
       label: "Account Type",
       value: TYPE_LABEL[integrator.productionStatus],
-      fill: integrator.productionStatus === "APPROVED" ? "bk-fill-green" : integrator.productionStatus === "REJECTED" ? "bk-fill-red" : "bk-fill-yellow",
+      fill: integrator.productionStatus === "APPROVED" ? "bk-fill-green" : (integrator.productionStatus === "REJECTED" || integrator.productionStatus === "SUSPENDED") ? "bk-fill-red" : "bk-fill-yellow",
     },
     { label: "Account Mode", value: integrator.accountMode === "PRODUCTION" ? "Production" : "Test Mode", fill: integrator.accountMode === "PRODUCTION" ? "bk-fill-green" : "bk-fill-yellow" },
   ];
