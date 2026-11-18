@@ -149,8 +149,8 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
             </p>
           </div>
           {summary && (
-            <span className={cn("bk-tag px-3 py-1 text-xs", summary.testMode ? "bk-fill-yellow" : "bk-fill-green")}>
-              {summary.testMode ? "🧪 Test mode - no real money" : "🟢 Live - real money"}
+            <span className={cn("bk-tag px-3 py-1 text-xs", summary.accountTestMode ? "bk-fill-yellow" : "bk-fill-green")}>
+              {summary.accountTestMode ? "🧪 Test mode - no real money" : "🟢 Live - real money"}
             </span>
           )}
         </header>
@@ -216,7 +216,7 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
                 <BkField label="Reason (optional)" htmlFor="po-reason">
                   <input id="po-reason" className="bk-input" value={reason} onChange={(e) => setReason(e.target.value.slice(0, 60))} placeholder="Refund order #1024" />
                 </BkField>
-                {summary?.testMode && (
+                {summary?.accountTestMode && (
                   <button type="button" className="bk-btn bk-fill-pink self-start text-xs" onClick={() => { setName("Test Recipient"); setPhone("0780000000"); setAmount("100"); setReason("Test payout"); }}>
                     Fill test details
                   </button>
@@ -239,7 +239,7 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
                   {reason.trim() && <Row label="Reason" value={reason.trim()} />}
                 </dl>
                 <p className="bk-muted text-xs">
-                  {summary?.testMode ? "Test mode: LMBTech simulates this payout." : "This sends real money and cannot be undone."}
+                  {summary?.accountTestMode ? "Test mode: no real money moves." : "This sends real money and cannot be undone."}
                 </p>
                 <div className="flex flex-wrap gap-3">
                   <button type="button" onClick={() => setStep("form")} disabled={step === "sending"} className="bk-btn bk-fill-paper">

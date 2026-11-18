@@ -4,7 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Zap, LayoutDashboard, Send, Rocket, UserCog, LogOut, History, Code2, Bell, CreditCard } from "lucide-react";
 import { cn } from "@/lib/utils";
+import * as React from "react";
 import { useIntegratorPortalStore } from "@/store/integrator-portal-store";
+import { MoneyViewToggle } from "@/components/layout/money-view-toggle";
+import { useMoneyView } from "@/store/money-view-store";
 
 const NAV = [
   { href: "/portal/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -22,6 +25,7 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const integrator = useIntegratorPortalStore((s) => s.integrator);
   const clearSession = useIntegratorPortalStore((s) => s.clearSession);
+  const view = useMoneyView("portal");
 
   function handleLogout() {
     clearSession();
@@ -78,7 +82,14 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
         </button>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto p-6">{children}</main>
+      <main className="min-w-0 flex-1 overflow-y-auto p-6">
+        <div className="-mt-2 mb-4 flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-muted-foreground">Showing</span>
+          <MoneyViewToggle kind="portal" />
+        </div>
+        {/* Remount the page when the switch flips so it reloads that ledger. */}
+        <React.Fragment key={view}>{children}</React.Fragment>
+      </main>
     </div>
   );
 }

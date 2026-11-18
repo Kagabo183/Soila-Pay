@@ -17,6 +17,9 @@ export function ReconcilePanel({ onChanged }: { onChanged: () => void }) {
   const [ref, setRef] = React.useState("");
   const [amount, setAmount] = React.useState("");
   const [channel, setChannel] = React.useState("OTHER_CARD");
+  const [direction, setDirection] = React.useState<"COLLECTION" | "DISBURSEMENT">("COLLECTION");
+  const [phone, setPhone] = React.useState("");
+  const payout = direction === "DISBURSEMENT";
   const [importing, setImporting] = React.useState(false);
 
   async function check() {
@@ -36,10 +39,17 @@ export function ReconcilePanel({ onChanged }: { onChanged: () => void }) {
     e.preventDefault();
     setImporting(true);
     try {
-      const p = await paymentService.importFromLmbtech({ referenceId: ref, amountRwf: Math.floor(Number(amount)), channel });
-      toast({ title: "Imported", description: `${p.referenceId} - ${rwf(p.amountRwf)} - ${p.status}`, variant: "success" });
+      const p = await paymentService.importFromLmbtech({
+        referenceId: ref, amountRwf: Math.floor(Number(amount)), channel, direction, recipientPhone: phone,
+      });
+      toast({
+        title: payout ? "Payout imported" : "Imported",
+        description: `${p.referenceId} - ${rwf(p.amountRwf)} - ${p.status}${payout ? " · see Disbursements" : ""}`,
+        variant: "success",
+      });
       setRef("");
       setAmount("");
+      setPhone("");
       onChanged();
     } catch (err) {
       toast({ title: "Not imported", description: paymentErrorMessage(err), variant: "error" });
@@ -89,8 +99,17 @@ export function ReconcilePanel({ onChanged }: { onChanged: () => void }) {
       {showImport && (
         <form onSubmit={doImport} className="bk-box mt-3 flex flex-col gap-3 p-3">
           <p className="text-xs">
-            For a transaction you can see on LMBTech&apos;s dashboard but not here (made outside Soila Pay). Use the NET amount LMBTech shows.
+            For a transaction you can see on LMBTech&apos;s dashboard but not here - made outside Soila Pay, like a payout you sent from
+            LMBTech directly. Copy its reference from LMBTech and use the NET amount LMBTech shows.
           </p>
+          <div className="flex gap-2">
+            {([["COLLECTION", "Payment in"], ["DISBURSEMENT", "Payout out"]] as const).map(([d, label]) => (
+              <button key={d} type="button" onClick={() => setDirection(d)} aria-pressed={direction === d}
+                className={cn("bk-btn min-h-9 flex-1 px-3 text-xs", direction === d ? "bk-fill-ink" : "bk-fill-paper")}>
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
             <label className="flex flex-col gap-1 text-[11px] font-bold uppercase">
               LMBTech reference
@@ -100,15 +119,22 @@ export function ReconcilePanel({ onChanged }: { onChanged: () => void }) {
               Net amount (RWF)
               <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} className="bk-input min-h-10 text-sm" />
             </label>
-            <label className="flex flex-col gap-1 text-[11px] font-bold uppercase">
-              Method
-              <select value={channel} onChange={(e) => setChannel(e.target.value)} className="bk-input min-h-10 text-sm">
-                <option value="VISA">Visa</option>
-                <option value="MASTERCARD">Mastercard</option>
-                <option value="OTHER_CARD">Other card</option>
-                <option value="MTN">MTN MoMo</option>
-              </select>
-            </label>
+            {payout ? (
+              <label className="flex flex-col gap-1 text-[11px] font-bold uppercase">
+                Sent to (optional)
+                <input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0788 123 456" className="bk-input min-h-10 text-sm" />
+              </label>
+            ) : (
+              <label className="flex flex-col gap-1 text-[11px] font-bold uppercase">
+                Method
+                <select value={channel} onChange={(e) => setChannel(e.target.value)} className="bk-input min-h-10 text-sm">
+                  <option value="VISA">Visa</option>
+                  <option value="MASTERCARD">Mastercard</option>
+                  <option value="OTHER_CARD">Other card</option>
+                  <option value="MTN">MTN MoMo</option>
+                </select>
+              </label>
+            )}
             <button type="submit" disabled={importing || !ref.trim() || !Number(amount)} className="bk-btn bk-fill-green min-h-10 px-4 text-xs">
               {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Import"}
             </button>

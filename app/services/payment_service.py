@@ -172,10 +172,12 @@ class PaymentService:
     def is_test_for(self, sandboxed: bool) -> bool:
         return sandboxed or self._settings.lmbtech_test_mode
 
-    async def available_balance(self, integrator: dict) -> Decimal:
-        """Balance in the integrator's current mode: sandbox money for
-        sandbox, real money for live - never mixed."""
-        return await self._repo.integrator_balance(integrator["id"], is_test=self.is_test_for(self.is_sandbox(integrator)))
+    async def available_balance(self, integrator: dict, *, is_test: Optional[bool] = None) -> Decimal:
+        """Balance in one ledger - by default the integrator's current mode
+        (sandbox money for sandbox, real money for live). Never mixed."""
+        if is_test is None:
+            is_test = self.is_test_for(self.is_sandbox(integrator))
+        return await self._repo.integrator_balance(integrator["id"], is_test=is_test)
 
     @property
     def gateway_configured(self) -> bool:
@@ -500,11 +502,23 @@ class PaymentService:
                 changes.append(outcome)
         return {"checked": len(refs), "corrected": changes, "errors": errors}
 
-    async def import_from_gateway(self, reference_id: str, amount_rwf: int, channel: str, description: str) -> dict:
+    async def import_from_gateway(
+        self,
+        reference_id: str,
+        amount_rwf: int,
+        channel: str,
+        description: str,
+        *,
+        direction: str = COLLECTION,
+        recipient_phone: Optional[str] = None,
+    ) -> dict:
         """Add a transaction that exists at LMBTech but not here (e.g. made
-        outside Soila Pay). LMBTech must know it; its status/name come from
-        LMBTech. `amount_rwf` is the NET amount shown on LMBTech's dashboard -
-        their status API reports a different, fee-inclusive figure."""
+        outside Soila Pay, such as a payout sent from LMBTech's dashboard).
+        LMBTech must know it; its status/name come from LMBTech. `amount_rwf`
+        is the NET amount shown on LMBTech's dashboard - their status API
+        reports a different, fee-inclusive figure. Imports belong to no
+        integrator, so they never change an integrator's balance."""
+        payout = direction == DISBURSEMENT
         if await self._repo.get_by_reference(reference_id):
             raise DuplicateReferenceError(f"Reference {reference_id} is already in Soila Pay")
         result = await self._gateway.get_status(reference_id)
@@ -512,10 +526,10 @@ class PaymentService:
             raise LMBTechError(f"LMBTech has no transaction with reference {reference_id}")
         pricing = await self.pricing()
         amount = Decimal(amount_rwf)
-        money = compute_money(amount, None, pricing.gateway_cost_percentage)
+        money = compute_money(amount, None, pricing.payout_cost_percentage if payout else pricing.gateway_cost_percentage)
         await self._repo.create(
             reference_id=reference_id,
-            direction=COLLECTION,
+            direction=DISBURSEMENT if payout else COLLECTION,
             integrator_id=None,
             method="MOMO" if channel == "MTN" else "CARD",
             channel=channel,
@@ -523,7 +537,7 @@ class PaymentService:
             money=money,
             customer_name=result.name or "Imported from LMBTech",
             customer_email="",
-            customer_phone=None,
+            customer_phone=recipient_phone,
             description=description or "Imported from LMBTech",
             return_url=None,
             is_test=self._settings.lmbtech_test_mode,

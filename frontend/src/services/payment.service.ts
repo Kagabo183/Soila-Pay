@@ -1,4 +1,5 @@
 import { apiClient } from "@/lib/axios";
+import { currentMoneyView } from "@/store/money-view-store";
 
 /** Everything money-related goes through LMBTech, on the real API only (no
  * mocks): collections (cards first - Visa, Mastercard, other - plus MTN
@@ -69,7 +70,10 @@ export interface PaymentSummary {
   totalCount: number;
   gatewayConfigured: boolean;
   payoutsConfigured: boolean;
+  /** The ledger these numbers come from (the Live/Test money switch). */
   testMode: boolean;
+  /** Where NEW payments/payouts from this account go (test or real money). */
+  accountTestMode: boolean;
   /** Portal only. */
   feePercentage: number | null;
   payoutFeePercentage: number | null;
@@ -234,6 +238,11 @@ function payoutBase(scope: PaymentScope) {
   return scope.kind === "admin" ? "/api/v1/admin/disbursements" : "/api/v1/integrator-portal/disbursements";
 }
 
+/** ?mode=live|test - every read shows exactly one ledger (the switch in the top bar). */
+function mode(scope: PaymentScope) {
+  return currentMoneyView(scope.kind);
+}
+
 function headers(scope: PaymentScope) {
   return scope.kind === "portal" ? { Authorization: `Bearer ${scope.token}` } : undefined;
 }
@@ -285,6 +294,7 @@ export const paymentService = {
         date_from: query.dateFrom || undefined,
         date_to: query.dateTo || undefined,
         cashout: query.cashout,
+        mode: mode(scope),
       },
     });
     return { items: data.items.map(fromApi), total: data.total, page: data.page, pageSize: data.page_size };
@@ -294,7 +304,7 @@ export const paymentService = {
   async period(scope: PaymentScope, dateFrom?: string, dateTo?: string): Promise<PeriodSummary> {
     const { data } = await apiClient.get(`${base(scope)}/period`, {
       headers: headers(scope),
-      params: { date_from: dateFrom || undefined, date_to: dateTo || undefined },
+      params: { date_from: dateFrom || undefined, date_to: dateTo || undefined, mode: mode(scope) },
     });
     return {
       availableBalanceRwf: data.available_balance_rwf ?? null,
@@ -324,7 +334,7 @@ export const paymentService = {
   },
 
   async summary(scope: PaymentScope, direction?: Direction): Promise<PaymentSummary> {
-    const { data } = await apiClient.get(`${base(scope)}/summary`, { headers: headers(scope), params: { direction } });
+    const { data } = await apiClient.get(`${base(scope)}/summary`, { headers: headers(scope), params: { direction, mode: mode(scope) } });
     return {
       collectedRwf: data.collected_rwf,
       disbursedRwf: data.disbursed_rwf,
@@ -338,6 +348,7 @@ export const paymentService = {
       gatewayConfigured: data.gateway_configured,
       payoutsConfigured: data.payouts_configured,
       testMode: data.test_mode,
+      accountTestMode: data.account_test_mode ?? data.test_mode,
       feePercentage: data.fee_percentage ?? null,
       payoutFeePercentage: data.payout_fee_percentage ?? null,
       availableBalanceRwf: data.available_balance_rwf ?? null,
@@ -350,7 +361,7 @@ export const paymentService = {
   },
 
   async overview(scope: PaymentScope, days = 14): Promise<Overview> {
-    const { data } = await apiClient.get(`${base(scope)}/overview`, { headers: headers(scope), params: { days } });
+    const { data } = await apiClient.get(`${base(scope)}/overview`, { headers: headers(scope), params: { days, mode: mode(scope) } });
     return {
       days: data.days,
       series: data.series,
@@ -412,12 +423,23 @@ export const paymentService = {
   },
 
   /** Admin: add a transaction that exists only at LMBTech. */
-  async importFromLmbtech(p: { referenceId: string; amountRwf: number; channel: string; description?: string }): Promise<Payment> {
+  async importFromLmbtech(p: {
+    referenceId: string;
+    amountRwf: number;
+    channel: string;
+    description?: string;
+    /** DISBURSEMENT = a payout sent from LMBTech's dashboard. */
+    direction?: "COLLECTION" | "DISBURSEMENT";
+    recipientPhone?: string;
+  }): Promise<Payment> {
+    const payout = p.direction === "DISBURSEMENT";
     const { data } = await apiClient.post("/api/v1/admin/payments/import", {
       reference_id: p.referenceId.trim(),
       amount_rwf: p.amountRwf,
-      channel: p.channel,
-      description: p.description || "Imported from LMBTech",
+      channel: payout ? "MTN" : p.channel,
+      direction: p.direction ?? "COLLECTION",
+      ...(payout && p.recipientPhone?.trim() ? { recipient_phone: p.recipientPhone.trim() } : {}),
+      description: p.description || (payout ? "Payout imported from LMBTech" : "Imported from LMBTech"),
     });
     return fromApi(data);
   },

@@ -10,6 +10,8 @@ import { toast } from "@/store/toast-store";
 import { authService } from "@/services/auth.service";
 import { paymentService } from "@/services/payment.service";
 import { MOCK_MODE } from "@/lib/mock";
+import { MoneyViewToggle } from "@/components/layout/money-view-toggle";
+import { useMoneyViewStore } from "@/store/money-view-store";
 
 export function TopNav() {
   const theme = useThemeStore((s) => s.theme);
@@ -19,16 +21,21 @@ export function TopNav() {
   // The badge follows the backend's real gateway mode (LMBTECH_TEST_MODE),
   // not a browser setting - so it can't say "Sandbox" while real money moves.
   const [live, setLive] = React.useState<boolean | null>(null);
+  const setAdminDefault = useMoneyViewStore((s) => s.setAdminDefault);
   React.useEffect(() => {
     let alive = true;
     paymentService
       .summary({ kind: "admin" })
-      .then((s) => alive && setLive(!s.testMode))
+      .then((s) => {
+        if (!alive) return;
+        setLive(!s.accountTestMode);
+        setAdminDefault(s.accountTestMode ? "test" : "live");
+      })
       .catch(() => alive && setLive(null));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [setAdminDefault]);
   const router = useRouter();
 
   async function handleLogout() {
@@ -46,6 +53,7 @@ export function TopNav() {
             {live ? "Production - real money" : "Test mode"}
           </StatusBadge>
         )}
+        <MoneyViewToggle kind="admin" />
         <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
           {MOCK_MODE ? (
             <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />

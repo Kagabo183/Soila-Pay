@@ -1,5 +1,6 @@
 import logging
 from decimal import Decimal
+from typing import Literal, Optional
 
 import pymysql
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -83,10 +84,12 @@ async def create_integrator(body: IntegratorCreate, request: Request):
 
 
 @router.get("/integrators/summary", response_model=list[IntegratorSummary])
-async def integrators_revenue_summary(request: Request):
+async def integrators_revenue_summary(request: Request, mode: Optional[Literal["live", "test"]] = None):
     """Per-integrator collected/disbursed/fees/LMBTech-cost/margin totals -
-    the "where does my margin actually come from" view."""
-    return await request.app.state.integrator_repo.revenue_summary()
+    the "where does my margin actually come from" view. One ledger only:
+    real money by default, test money with ?mode=test."""
+    is_test = request.app.state.settings.lmbtech_test_mode if mode is None else mode == "test"
+    return await request.app.state.integrator_repo.revenue_summary(is_test=is_test)
 
 
 @router.patch("/integrators/{integrator_id}", response_model=IntegratorOut)

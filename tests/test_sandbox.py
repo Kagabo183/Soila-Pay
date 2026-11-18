@@ -224,3 +224,40 @@ def test_go_live_server_ips_are_optional_but_valid():
     assert IntegratorUpdate(ip_whitelist="").ip_whitelist == ""
     with pytest.raises(ValidationError):
         IntegratorUpdate(ip_whitelist="not-an-ip")
+
+
+async def test_import_payout_made_on_lmbtech_dashboard():
+    """A payout sent from LMBTech's own dashboard can be imported as a
+    DISBURSEMENT (MTN, no integrator) with LMBTech's status and name."""
+    from app.schemas.payment import ImportRequest
+    from app.services.lmbtech_client import GatewayResult
+
+    body = ImportRequest(reference_id="LMB-PAYOUT-1", amount_rwf=500, direction="DISBURSEMENT", channel="VISA", recipient_phone="0788123456")
+    assert body.channel == "MTN" and body.recipient_phone == "+250788123456"
+
+    class Gateway:
+        configured = True
+
+        async def get_status(self, ref):
+            return GatewayResult(status="SUCCESS", message="Payout successful", transaction_id="T1", name="Aline U.")
+
+    repo = FakeRepo()
+
+    async def reconcile_state(ref, *, status, status_message, gateway_transaction_id, gateway_amount):
+        repo.rows[ref].update(status=status, status_message=status_message, gateway_transaction_id=gateway_transaction_id)
+
+    repo.reconcile_state = reconcile_state
+    svc = _svc(repo)
+    svc._gateway = Gateway()
+
+    async def pricing():
+        from app.services.payment_service import Pricing
+        return Pricing(gateway_cost_percentage=Decimal("5"), default_fee_percentage=Decimal("6"),
+                       payout_cost_percentage=Decimal("3"), payout_default_fee_percentage=Decimal("6"))
+
+    svc.pricing = pricing
+    row = await svc.import_from_gateway(body.reference_id, body.amount_rwf, body.channel, body.description,
+                                        direction=body.direction, recipient_phone=body.recipient_phone)
+    assert row["direction"] == "DISBURSEMENT" and row["method"] == "MOMO" and row["channel"] == "MTN"
+    assert row["integrator_id"] is None and row["imported"] is True  # never touches an integrator's balance
+    assert row["status"] == "SUCCESS" and row["customer_name"] == "Aline U." and row["customer_phone"] == "+250788123456"

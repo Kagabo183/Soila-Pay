@@ -169,7 +169,11 @@ class PaymentSummary(BaseModel):
     total_count: int
     gateway_configured: bool
     payouts_configured: bool
+    # Which ledger these numbers are from (the screen's Live/Test choice).
     test_mode: bool
+    # Where NEW payments/payouts from this account go right now (test or
+    # real money) - independent of which ledger is being viewed.
+    account_test_mode: bool = False
     # Portal: this integrator's fees and what it can still pay out.
     fee_percentage: Optional[float] = None
     payout_fee_percentage: Optional[float] = None
@@ -259,6 +263,23 @@ class ImportRequest(BaseModel):
     amount_rwf: int = Field(..., ge=1, le=5_000_000)
     channel: Literal["VISA", "MASTERCARD", "OTHER_CARD", "MTN"] = "OTHER_CARD"
     description: str = Field(default="Imported from LMBTech", max_length=120)
+    # DISBURSEMENT = a payout sent from LMBTech's dashboard (MTN MoMo only).
+    direction: Literal["COLLECTION", "DISBURSEMENT"] = "COLLECTION"
+    # Payouts: who received it (optional - LMBTech's status gives the name).
+    recipient_phone: Optional[str] = None
+
+    @field_validator("recipient_phone", mode="before")
+    @classmethod
+    def _phone(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return normalize_rw_phone(v)
+
+    @model_validator(mode="after")
+    def _payout_is_momo(self) -> "ImportRequest":
+        if self.direction == "DISBURSEMENT":
+            self.channel = "MTN"  # LMBTech payouts only go to MTN MoMo
+        return self
 
 
 class OverviewDay(BaseModel):

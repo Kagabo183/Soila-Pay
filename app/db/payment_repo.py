@@ -268,10 +268,11 @@ class PaymentRepo:
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
         cashout: Optional[bool] = None,
+        is_test: Optional[bool] = None,
     ) -> tuple[list[dict], int]:
         clause, args = _where(
             integrator_id=integrator_id, direction=direction, status=status, method=method, q=q,
-            date_from=date_from, date_to=date_to, cashout=cashout,
+            date_from=date_from, date_to=date_to, cashout=cashout, is_test=is_test,
         )
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:

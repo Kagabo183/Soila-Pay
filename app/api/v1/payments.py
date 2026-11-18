@@ -173,10 +173,11 @@ async def _list(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     cashout: Optional[bool] = None,
+    is_test: Optional[bool] = None,
 ) -> PaginatedPayments:
     rows, total = await request.app.state.payment_repo.list_paginated(
         page, page_size, integrator_id=integrator_id, direction=direction, status=status, method=method, q=q,
-        date_from=date_from, date_to=date_to, cashout=cashout,
+        date_from=date_from, date_to=date_to, cashout=cashout, is_test=is_test,
     )
     return PaginatedPayments(
         items=[payment_out(r, admin=admin) for r in rows], total=total, page=page, page_size=page_size
@@ -190,11 +191,26 @@ def _mode_is_test(request: Request, integrator: Optional[dict]) -> bool:
     return _service(request).is_test_for(PaymentService.is_sandbox(integrator))
 
 
-async def _summary(request: Request, integrator: Optional[dict], direction: Optional[str] = None) -> PaymentSummary:
+# ?mode=live|test picks the ledger a screen shows; omitted = the default above.
+ViewMode = Optional[Literal["live", "test"]]
+
+
+def _view_is_test(request: Request, integrator: Optional[dict], mode: ViewMode) -> bool:
+    """Test and real money are never shown together: every list, total and
+    chart reads exactly one ledger."""
+    if mode is None:
+        return _mode_is_test(request, integrator)
+    return mode == "test"
+
+
+async def _summary(
+    request: Request, integrator: Optional[dict], direction: Optional[str] = None, mode: ViewMode = None
+) -> PaymentSummary:
     """integrator=None -> admin view across everyone, with cost + margin."""
     service = _service(request)
     repo = request.app.state.payment_repo
-    row = await repo.summary(integrator["id"] if integrator else None, direction, is_test=_mode_is_test(request, integrator))
+    is_test = _view_is_test(request, integrator, mode)
+    row = await repo.summary(integrator["id"] if integrator else None, direction, is_test=is_test)
     pricing = await service.pricing()
     summary = PaymentSummary(
         collected_rwf=float(row["collected_rwf"]),
@@ -208,12 +224,13 @@ async def _summary(request: Request, integrator: Optional[dict], direction: Opti
         total_count=int(row["total_count"]),
         gateway_configured=service.gateway_configured,
         payouts_configured=service.payouts_configured,
-        test_mode=_mode_is_test(request, integrator),
+        test_mode=is_test,
+        account_test_mode=_mode_is_test(request, integrator),
     )
     if integrator is not None:
         summary.fee_percentage = float(service.fee_for(integrator, pricing))
         summary.payout_fee_percentage = float(service.fee_for(integrator, pricing, DISBURSEMENT))
-        summary.available_balance_rwf = float(await service.available_balance(integrator))
+        summary.available_balance_rwf = float(await service.available_balance(integrator, is_test=is_test))
     else:
         summary.gateway_cost_percentage = float(pricing.gateway_cost_percentage)
         summary.payout_cost_percentage = float(pricing.payout_cost_percentage)
@@ -223,14 +240,17 @@ async def _summary(request: Request, integrator: Optional[dict], direction: Opti
     return summary
 
 
-async def _period(request: Request, integrator: Optional[dict], date_from: Optional[date], date_to: Optional[date]) -> PeriodSummary:
+async def _period(
+    request: Request, integrator: Optional[dict], date_from: Optional[date], date_to: Optional[date], mode: ViewMode = None
+) -> PeriodSummary:
     repo = request.app.state.payment_repo
-    t = await repo.range_totals(integrator["id"] if integrator else None, date_from, date_to, is_test=_mode_is_test(request, integrator))
+    is_test = _view_is_test(request, integrator, mode)
+    t = await repo.range_totals(integrator["id"] if integrator else None, date_from, date_to, is_test=is_test)
     net, withdrawn = float(t["net_rwf"]), float(t["withdrawn_rwf"])
     return PeriodSummary(
         date_from=date_from.isoformat() if date_from else None,
         date_to=date_to.isoformat() if date_to else None,
-        available_balance_rwf=float(await _service(request).available_balance(integrator)) if integrator else None,
+        available_balance_rwf=float(await _service(request).available_balance(integrator, is_test=is_test)) if integrator else None,
         gross_rwf=float(t["gross_rwf"]),
         net_rwf=net,
         withdrawn_rwf=withdrawn,
@@ -240,13 +260,14 @@ async def _period(request: Request, integrator: Optional[dict], date_from: Optio
     )
 
 
-async def _overview(request: Request, integrator: Optional[dict], days: int) -> Overview:
+async def _overview(request: Request, integrator: Optional[dict], days: int, mode: ViewMode = None) -> Overview:
     repo = request.app.state.payment_repo
     integrator_id = integrator["id"] if integrator else None
-    data = await repo.overview(days, integrator_id, is_test=_mode_is_test(request, integrator))
+    is_test = _view_is_test(request, integrator, mode)
+    data = await repo.overview(days, integrator_id, is_test=is_test)
     today = data["today"]
     finished = int(today["success"]) + int(today["failed"])
-    rows, _ = await repo.list_paginated(1, 8, integrator_id=integrator_id)
+    rows, _ = await repo.list_paginated(1, 8, integrator_id=integrator_id, is_test=is_test)
     return Overview(
         days=days,
         series=[OverviewDay(**d) for d in data["series"]],
@@ -427,7 +448,11 @@ async def api_list_payments(
     method: MethodFilter = None,
     integrator: dict = Depends(_integrator_from_key),
 ):
-    return await _list(request, page, page_size, integrator["id"], direction=direction, status=status, method=method)
+    # A sandbox key sees only test transactions, a live key only real ones.
+    return await _list(
+        request, page, page_size, integrator["id"], direction=direction, status=status, method=method,
+        is_test=_mode_is_test(request, integrator),
+    )
 
 
 @disbursement_router.post("", response_model=PaymentOut, status_code=201)
@@ -459,9 +484,9 @@ async def portal_create_payment(body: PaymentCreate, request: Request, integrato
 
 @portal_router.get("/summary", response_model=PaymentSummary)
 async def portal_summary(
-    request: Request, direction: DirectionFilter = None, integrator: dict = Depends(_current_integrator)
+    request: Request, direction: DirectionFilter = None, mode: ViewMode = None, integrator: dict = Depends(_current_integrator)
 ):
-    return await _summary(request, integrator, direction)
+    return await _summary(request, integrator, direction, mode)
 
 
 @portal_router.get("/period", response_model=PeriodSummary)
@@ -469,10 +494,11 @@ async def portal_period(
     request: Request,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    mode: ViewMode = None,
     integrator: dict = Depends(_current_integrator),
 ):
     """Available Balance / Total Net / Total Withdraw / Remaining for a date range."""
-    return await _period(request, integrator, date_from, date_to)
+    return await _period(request, integrator, date_from, date_to, mode)
 
 
 @portal_router.post("/cashout", response_model=PaymentOut, status_code=201)
@@ -493,9 +519,10 @@ async def portal_cashout(body: CashoutRequest, request: Request, integrator: dic
 
 @portal_router.get("/overview", response_model=Overview)
 async def portal_overview(
-    request: Request, days: int = Query(default=14, ge=1, le=90), integrator: dict = Depends(_current_integrator)
+    request: Request, days: int = Query(default=14, ge=1, le=90), mode: ViewMode = None,
+    integrator: dict = Depends(_current_integrator),
 ):
-    return await _overview(request, integrator, days)
+    return await _overview(request, integrator, days, mode)
 
 
 @portal_router.get("/{reference_id}", response_model=PaymentOut)
@@ -515,11 +542,12 @@ async def portal_list_payments(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     cashout: Optional[bool] = None,
+    mode: ViewMode = None,
     integrator: dict = Depends(_current_integrator),
 ):
     return await _list(
         request, page, page_size, integrator["id"], direction=direction, status=status, method=method, q=q,
-        date_from=date_from, date_to=date_to, cashout=cashout,
+        date_from=date_from, date_to=date_to, cashout=cashout, is_test=_view_is_test(request, integrator, mode),
     )
 
 
@@ -538,13 +566,13 @@ async def admin_create_payment(body: PaymentCreate, request: Request):
 
 
 @admin_router.get("/summary", response_model=PaymentSummary)
-async def admin_summary(request: Request, direction: DirectionFilter = None):
-    return await _summary(request, None, direction)
+async def admin_summary(request: Request, direction: DirectionFilter = None, mode: ViewMode = None):
+    return await _summary(request, None, direction, mode)
 
 
 @admin_router.get("/overview", response_model=Overview)
-async def admin_overview(request: Request, days: int = Query(default=14, ge=1, le=90)):
-    return await _overview(request, None, days)
+async def admin_overview(request: Request, days: int = Query(default=14, ge=1, le=90), mode: ViewMode = None):
+    return await _overview(request, None, days, mode)
 
 
 @admin_router.get("/pricing", response_model=PaymentPricingOut)
@@ -575,8 +603,10 @@ async def admin_set_pricing(body: PaymentPricing, request: Request):
 
 
 @admin_router.get("/period", response_model=PeriodSummary)
-async def admin_period(request: Request, date_from: Optional[date] = None, date_to: Optional[date] = None):
-    return await _period(request, None, date_from, date_to)
+async def admin_period(
+    request: Request, date_from: Optional[date] = None, date_to: Optional[date] = None, mode: ViewMode = None
+):
+    return await _period(request, None, date_from, date_to, mode)
 
 
 @admin_router.post("/{reference_id}/settle", response_model=PaymentOut)
@@ -604,7 +634,10 @@ async def admin_import(body: ImportRequest, request: Request):
     """Add a transaction that exists only at LMBTech (made outside Soila Pay),
     so both sides match. LMBTech must know the reference."""
     try:
-        row = await _service(request).import_from_gateway(body.reference_id, body.amount_rwf, body.channel, body.description)
+        row = await _service(request).import_from_gateway(
+            body.reference_id.strip(), body.amount_rwf, body.channel, body.description,
+            direction=body.direction, recipient_phone=body.recipient_phone,
+        )
     except DuplicateReferenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LMBTechError as exc:
@@ -629,10 +662,11 @@ async def admin_list_payments(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     cashout: Optional[bool] = None,
+    mode: ViewMode = None,
 ):
     return await _list(
         request, page, page_size, None, direction=direction, status=status, method=method, q=q, admin=True,
-        date_from=date_from, date_to=date_to, cashout=cashout,
+        date_from=date_from, date_to=date_to, cashout=cashout, is_test=_view_is_test(request, None, mode),
     )
 
 

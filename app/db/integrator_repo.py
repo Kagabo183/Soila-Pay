@@ -321,7 +321,7 @@ class IntegratorRepo:
 
     # -- Revenue reporting -----------------------------------------------------
 
-    async def revenue_summary(self) -> list[dict]:
+    async def revenue_summary(self, *, is_test: bool = False) -> list[dict]:
         """Per-integrator totals from the LMBTech ledger (payments table):
         collected, disbursed, fees charged, LMBTech cost and margin - using
         the fee/cost snapshotted on each SUCCESS row, so past rate changes
@@ -341,10 +341,11 @@ class IntegratorRepo:
                         COALESCE(SUM(p.margin_amount_rwf), 0) AS total_margin_rwf
                     FROM integrators i
                     LEFT JOIN payments p
-                        ON p.integrator_id = i.id AND p.status = 'SUCCESS'
+                        ON p.integrator_id = i.id AND p.status = 'SUCCESS' AND p.is_test = %s
                     GROUP BY i.id, i.name
                     ORDER BY i.id
-                    """
+                    """,
+                    (int(is_test),),
                 )
                 return await cur.fetchall()
 

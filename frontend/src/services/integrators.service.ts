@@ -4,6 +4,7 @@ import { generateIntegrators } from "@/data/mock/generators";
 import { mockDocumentStore } from "@/data/mock/mock-document-store";
 import { EMPTY_PROFILE, integratorFromApi } from "@/lib/integrator";
 import { profileInputToApi } from "@/types/api";
+import { currentMoneyView } from "@/store/money-view-store";
 import type { GoLiveChecklist } from "@/services/integrator-portal.service";
 import type {
   DocumentType,
@@ -259,7 +260,7 @@ export const integratorsService = {
   /** GET /api/v1/admin/integrators/summary - collected / paid out / fees /
    * LMBTech cost / margin per integrator, from the real ledger (no mock). */
   async summary(): Promise<IntegratorSummary[]> {
-    const { data } = await apiClient.get("/api/v1/admin/integrators/summary");
+    const { data } = await apiClient.get("/api/v1/admin/integrators/summary", { params: { mode: currentMoneyView("admin") } });
     return (data as Parameters<typeof summaryFromApi>[0][]).map(summaryFromApi);
   },
 };

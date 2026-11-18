@@ -34,7 +34,7 @@ export function PaymentsPage({
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [tab, setTab] = React.useState<Tab>("pay");
   const bump = React.useCallback(() => setRefreshKey((k) => k + 1), []);
-  const testMode = summary?.testMode ?? true;
+  const testMode = summary?.accountTestMode ?? true;
   const token = scope.kind === "portal" ? scope.token : null;
   const admin = scope.kind === "admin";
 
