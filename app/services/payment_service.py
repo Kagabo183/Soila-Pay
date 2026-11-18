@@ -51,11 +51,16 @@ DEFAULT_GATEWAY_COST = Decimal("5.00")  # LMBTech's cut on collections, confirme
 DEFAULT_PAYMENT_FEE = Decimal("6.00")
 DEFAULT_PAYOUT_COST = Decimal("5.00")  # assumed same as collections until LMBTech confirms
 DEFAULT_PAYOUT_FEE = Decimal("6.00")
+DEFAULT_MOMO_COST = Decimal("3.00")  # Kitovu Pay, confirmed on its fee quote (3 RWF per 100)
 _CENT = Decimal("0.01")
 
 
 class DuplicateReferenceError(Exception):
     pass
+
+
+class ChannelUnavailableError(Exception):
+    """The chosen payment method isn't switched on (e.g. Airtel without Kitovu)."""
 
 
 class CashoutSetupError(Exception):
@@ -79,10 +84,16 @@ def new_reference(prefix: str = "SP") -> str:
 
 @dataclass(frozen=True)
 class Pricing:
-    gateway_cost_percentage: Decimal  # LMBTech's cut on collections
+    gateway_cost_percentage: Decimal  # LMBTech's cut on card collections
     default_fee_percentage: Decimal  # integrators' default collection fee
     payout_cost_percentage: Decimal  # LMBTech's cut on payouts
     payout_default_fee_percentage: Decimal  # integrators' default payout fee
+    momo_cost_percentage: Decimal = DEFAULT_MOMO_COST  # Kitovu's cut on MoMo collections
+
+    @property
+    def collection_cost_floor(self) -> Decimal:
+        """A collection fee below this loses money on at least one gateway."""
+        return max(self.gateway_cost_percentage, self.momo_cost_percentage)
 
     def cost(self, direction: str) -> Decimal:
         return self.payout_cost_percentage if direction == DISBURSEMENT else self.gateway_cost_percentage
@@ -115,6 +126,7 @@ _SETTING_KEYS = {
     "default_fee_percentage": ("payment_fee_percentage", DEFAULT_PAYMENT_FEE),
     "payout_cost_percentage": ("lmbtech_payout_cost_percentage", DEFAULT_PAYOUT_COST),
     "payout_default_fee_percentage": ("payout_fee_percentage", DEFAULT_PAYOUT_FEE),
+    "momo_cost_percentage": ("kitovu_cost_percentage", DEFAULT_MOMO_COST),
 }
 
 
@@ -226,12 +238,16 @@ class PaymentService:
             raise DuplicateReferenceError(f"Reference {reference_id} was already used")
 
         method = "CARD" if body.channel in CARD_CHANNELS else "MOMO"
-        channel = "MTN" if body.channel == "MTN_MOMO" else body.channel
+        channel = {"MTN_MOMO": "MTN", "AIRTEL_MONEY": "AIRTEL"}.get(body.channel, body.channel)
         amount = Decimal(body.amount_rwf)
         pricing = await self.pricing()
-        money = compute_money(amount, self.fee_for(integrator, pricing), pricing.gateway_cost_percentage)
         sandboxed = self.is_sandbox(integrator)
         via_kitovu = not sandboxed and method == "MOMO" and self.momo_via_kitovu
+        if channel == "AIRTEL" and not sandboxed and not via_kitovu:
+            raise ChannelUnavailableError("Airtel Money is not available yet - use MTN MoMo or a card")
+        # Each gateway's own cut: Kitovu for mobile money, LMBTech otherwise.
+        cost = pricing.momo_cost_percentage if via_kitovu else pricing.gateway_cost_percentage
+        money = compute_money(amount, self.fee_for(integrator, pricing), cost)
         external_id = await self._new_kitovu_external_id() if via_kitovu else None
         # Kitovu's UAT gateway moves no real money - record it as test money.
         is_test = self.is_test_for(sandboxed) or (via_kitovu and self._kitovu.is_uat)

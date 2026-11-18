@@ -440,7 +440,7 @@ class PaymentRepo:
                     ORDER BY name
                     """,
                     (
-                        pricing.default_fee_percentage, pricing.gateway_cost_percentage,
+                        pricing.default_fee_percentage, pricing.collection_cost_floor,
                         pricing.payout_default_fee_percentage, pricing.payout_cost_percentage,
                     ),
                 )

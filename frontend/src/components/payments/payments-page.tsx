@@ -99,7 +99,7 @@ export function PaymentsPage({
 
         {tab === "pay" && (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
-            <CheckoutPanel scope={scope} testMode={testMode} onChange={bump} />
+            <CheckoutPanel scope={scope} testMode={testMode} airtelAvailable={!!summary?.airtelAvailable} onChange={bump} />
             <PaymentsList scope={scope} refreshKey={refreshKey} showIntegrator={showIntegrator} compact />
           </div>
         )}

@@ -4,7 +4,7 @@ import { currentMoneyView } from "@/store/money-view-store";
 /** Everything money-related goes through LMBTech, on the real API only (no
  * mocks): collections (cards first - Visa, Mastercard, other - plus MTN
  * MoMo) and disbursements (payouts to MTN MoMo). Both live in one ledger. */
-export type PaymentChannel = "VISA" | "MASTERCARD" | "OTHER_CARD" | "MTN_MOMO";
+export type PaymentChannel = "VISA" | "MASTERCARD" | "OTHER_CARD" | "MTN_MOMO" | "AIRTEL_MONEY";
 export type PaymentStatus = "PENDING" | "SUCCESS" | "FAILED" | "CANCELLED";
 export type Direction = "COLLECTION" | "DISBURSEMENT";
 
@@ -70,6 +70,10 @@ export interface PaymentSummary {
   totalCount: number;
   gatewayConfigured: boolean;
   payoutsConfigured: boolean;
+  /** Airtel Money can be offered (Kitovu Pay is on, or sandbox). */
+  airtelAvailable: boolean;
+  /** Who handles MoMo collections: KITOVU or LMBTECH. */
+  momoGateway: string;
   /** The ledger these numbers come from (the Live/Test money switch). */
   testMode: boolean;
   /** Where NEW payments/payouts from this account go (test or real money). */
@@ -120,7 +124,10 @@ export interface IntegratorPaymentFee {
 }
 
 export interface PaymentPricing {
+  /** Cards - LMBTech's cut. */
   gatewayCostPercentage: number;
+  /** Mobile money collections - Kitovu Pay's cut. */
+  momoCostPercentage: number;
   defaultFeePercentage: number;
   payoutCostPercentage: number;
   payoutDefaultFeePercentage: number;
@@ -214,6 +221,7 @@ function fromApi(row: any): Payment {
 function pricingFromApi(data: any): PaymentPricing {
   return {
     gatewayCostPercentage: data.gateway_cost_percentage,
+    momoCostPercentage: data.momo_cost_percentage ?? 3,
     defaultFeePercentage: data.default_fee_percentage,
     payoutCostPercentage: data.payout_cost_percentage,
     payoutDefaultFeePercentage: data.payout_default_fee_percentage,
@@ -347,6 +355,8 @@ export const paymentService = {
       totalCount: data.total_count,
       gatewayConfigured: data.gateway_configured,
       payoutsConfigured: data.payouts_configured,
+      airtelAvailable: !!data.airtel_available,
+      momoGateway: data.momo_gateway ?? "LMBTECH",
       testMode: data.test_mode,
       accountTestMode: data.account_test_mode ?? data.test_mode,
       feePercentage: data.fee_percentage ?? null,
@@ -389,6 +399,7 @@ export const paymentService = {
   async setPricing(p: Omit<PaymentPricing, "integrators">): Promise<PaymentPricing> {
     const { data } = await apiClient.put("/api/v1/admin/payments/pricing", {
       gateway_cost_percentage: p.gatewayCostPercentage,
+      momo_cost_percentage: p.momoCostPercentage,
       default_fee_percentage: p.defaultFeePercentage,
       payout_cost_percentage: p.payoutCostPercentage,
       payout_default_fee_percentage: p.payoutDefaultFeePercentage,

@@ -132,3 +132,61 @@ async def test_service_routes_live_momo_to_kitovu_and_syncs():
 
     synced = await svc.sync(row["reference_id"])
     assert synced["status"] == "SUCCESS"
+
+
+def test_airtel_channel_checks_the_network():
+    from pydantic import ValidationError
+
+    p = PaymentCreate(amount_rwf=500, channel="AIRTEL_MONEY", customer_name="Eric", customer_email="e@b.rw", customer_phone="0731234567")
+    assert p.customer_phone == "+250731234567"
+    with pytest.raises(ValidationError, match="Airtel numbers start with 072 or 073"):
+        PaymentCreate(amount_rwf=500, channel="AIRTEL_MONEY", customer_name="Eric", customer_email="e@b.rw", customer_phone="0788123456")
+    with pytest.raises(ValidationError, match="MTN numbers start with 078 or 079"):
+        PaymentCreate(amount_rwf=500, channel="MTN_MOMO", customer_name="Eric", customer_email="e@b.rw", customer_phone="0731234567")
+
+
+async def test_airtel_needs_kitovu_and_momo_uses_kitovu_cost():
+    from tests.test_sandbox import FakeRepo, _svc
+    from app.services.lmbtech_client import GatewayResult
+    from app.services.payment_service import ChannelUnavailableError, Pricing
+
+    repo = FakeRepo()
+
+    async def external_id_taken(gateway, ext):
+        return False
+
+    repo.external_id_taken = external_id_taken
+    svc = _svc(repo)
+
+    async def pricing():
+        return Pricing(gateway_cost_percentage=Decimal("5"), default_fee_percentage=Decimal("6"),
+                       payout_cost_percentage=Decimal("5"), payout_default_fee_percentage=Decimal("6"),
+                       momo_cost_percentage=Decimal("3"))
+
+    svc.pricing = pricing
+    live = {"id": 7, "name": "Shop", "key_mode": "production", "account_mode": "PRODUCTION",
+            "payment_fee_percentage": None, "payout_fee_percentage": None}
+    airtel = PaymentCreate(amount_rwf=1000, channel="AIRTEL_MONEY", customer_name="Eric", customer_email="e@b.rw", customer_phone="0731234567")
+    # LMBTech only (MOMO_GATEWAY=lmbtech): Airtel is refused up front.
+    with pytest.raises(ChannelUnavailableError):
+        await svc.create(airtel, live)
+
+    class FakeKitovu:
+        configured, is_uat = True, False
+
+        async def collect(self, **kw):
+            return GatewayResult(status="PENDING")
+
+    svc._settings = _settings()
+    svc._kitovu = FakeKitovu()
+
+    async def apply(ref, result):
+        return repo.rows[ref]
+
+    svc._apply = apply
+    row = await svc.create(airtel, live)
+    m = row["money"]
+    assert row["gateway"] == "KITOVU" and row["channel"] == "AIRTEL" and row["is_test"] is False
+    assert m.gateway_cost_percentage == Decimal("3") and m.gateway_cost_amount_rwf == Decimal("30.00")
+    assert m.margin_amount_rwf == Decimal("30.00")  # 6% fee - 3% Kitovu = 3% margin (was 1% on LMBTech)
+    assert (await pricing()).collection_cost_floor == Decimal("5")

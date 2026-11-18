@@ -50,7 +50,7 @@ async def create_integrator(body: IntegratorCreate, request: Request):
         raise HTTPException(status_code=400, detail="A password needs an email or username to log in with")
     pricing = await request.app.state.payment_service.pricing()
     for fee, cost, what in (
-        (body.payment_fee_percentage, pricing.gateway_cost_percentage, "Collection"),
+        (body.payment_fee_percentage, pricing.collection_cost_floor, "Collection"),
         (body.payout_fee_percentage, pricing.payout_cost_percentage, "Payout"),
     ):
         if fee is not None and Decimal(fee) < cost:
@@ -100,7 +100,7 @@ async def update_integrator(integrator_id: int, body: IntegratorUpdate, request:
         raise HTTPException(status_code=404, detail="Integrator not found")
     pricing = await request.app.state.payment_service.pricing()
     checks = [
-        (body.payment_fee_percentage, body.clear_payment_fee, pricing.gateway_cost_percentage, "Collection", "payment"),
+        (body.payment_fee_percentage, body.clear_payment_fee, pricing.collection_cost_floor, "Collection", "payment"),
         (body.payout_fee_percentage, body.clear_payout_fee, pricing.payout_cost_percentage, "Payout", "payout"),
     ]
     for fee, clearing, cost, label, noun in checks:

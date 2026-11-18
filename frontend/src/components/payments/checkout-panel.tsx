@@ -11,7 +11,7 @@ import {
   type PaymentChannel,
   type PaymentScope,
 } from "@/services/payment.service";
-import { MastercardLogo, MtnMomoLogo, OtherCardLogo, VisaLogo, channelFill, channelLabel } from "./payment-logos";
+import { AirtelMoneyLogo, MastercardLogo, MtnMomoLogo, OtherCardLogo, VisaLogo, channelFill, channelLabel } from "./payment-logos";
 import { BkField, rwf } from "./brutal";
 
 const METHODS: {
@@ -25,6 +25,7 @@ const METHODS: {
   { id: "MASTERCARD", title: "Mastercard", hint: "Debit or credit card", Logo: MastercardLogo },
   { id: "OTHER_CARD", title: "Other card", hint: "Any other bank card", Logo: OtherCardLogo },
   { id: "MTN_MOMO", title: "MTN MoMo", hint: "Approve on the phone with a PIN", Logo: MtnMomoLogo },
+  { id: "AIRTEL_MONEY", title: "Airtel Money", hint: "Approve on the phone with a PIN", Logo: AirtelMoneyLogo },
 ];
 
 const QUICK_AMOUNTS = [1000, 5000, 10000, 20000];
@@ -33,14 +34,15 @@ const POLL_MS = 3000;
 const POLL_LIMIT = 60; // ~3 minutes
 
 /** 0788123456 / 788123456 / +250788123456 -> null if fine, else a message. */
-export function phoneProblem(raw: string): string | null {
+export function phoneProblem(raw: string, network: "MTN" | "AIRTEL" = "MTN"): string | null {
   let d = raw.replace(/\D/g, "");
   if (!d) return null;
   if (d.startsWith("250")) d = d.slice(3);
   else if (d.startsWith("0")) d = d.slice(1);
   if (d.length < 9) return `${9 - d.length} more digit${9 - d.length === 1 ? "" : "s"} needed`;
   if (d.length > 9 || !d.startsWith("7")) return "Use a Rwandan number like 0788 123 456";
-  if (!/^7[89]/.test(d)) return "MTN numbers start with 078 or 079";
+  if (network === "MTN" && !/^7[89]/.test(d)) return "MTN numbers start with 078 or 079";
+  if (network === "AIRTEL" && !/^7[23]/.test(d)) return "Airtel numbers start with 072 or 073";
   return null;
 }
 
@@ -50,10 +52,13 @@ interface CheckoutPanelProps {
   scope: PaymentScope;
   /** Gateway account in test mode - shows the stamp + "Fill test details". */
   testMode?: boolean;
+  /** Offer Airtel Money (only when Kitovu Pay handles mobile money, or sandbox). */
+  airtelAvailable?: boolean;
   onChange?: (payment: Payment) => void;
 }
 
-export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPanelProps) {
+export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false, onChange }: CheckoutPanelProps) {
+  const methods = METHODS.filter((m) => m.id !== "AIRTEL_MONEY" || airtelAvailable);
   const [step, setStep] = React.useState<Step>("method");
   const [channel, setChannel] = React.useState<PaymentChannel>("VISA");
   const [amount, setAmount] = React.useState("");
@@ -70,13 +75,15 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
     onChangeRef.current = onChange;
   }, [onChange]);
 
-  const isMomo = channel === "MTN_MOMO";
+  const isMomo = channel === "MTN_MOMO" || channel === "AIRTEL_MONEY";
+  const network = channel === "AIRTEL_MONEY" ? "AIRTEL" : "MTN";
+  const networkName = network === "AIRTEL" ? "Airtel" : "MTN";
   const amountNum = Math.floor(Number(amount) || 0);
   const errors = {
     amount: amountNum < MIN_AMOUNT ? (amount ? `Minimum is ${rwf(MIN_AMOUNT)}` : "Enter an amount") : null,
     name: name.trim().length < 2 ? "Enter the customer's name" : null,
     email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()) ? null : "Enter a valid email, e.g. name@example.com",
-    phone: isMomo ? (phone ? phoneProblem(phone) : "Enter the MTN number") : null,
+    phone: isMomo ? (phone ? phoneProblem(phone, network) : `Enter the ${networkName} number`) : null,
   };
   const canPay = !Object.values(errors).some(Boolean);
   // Show errors only after the first try (or as the user fixes a field).
@@ -121,7 +128,7 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
     setAmount("1000");
     setName("Test Customer");
     setEmail("customer@example.com");
-    setPhone("0780000000");
+    setPhone(channel === "AIRTEL_MONEY" ? "0730000000" : "0780000000");
     setDescription("Test payment");
   }
 
@@ -202,7 +209,7 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
             <p className="bk-display text-2xl font-bold">How will they pay?</p>
             <p className="bk-muted mt-1 text-sm">Tap one.</p>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              {METHODS.map(({ id, title, hint, Logo }) => (
+              {methods.map(({ id, title, hint, Logo }) => (
                 <button
                   key={id}
                   type="button"
@@ -282,7 +289,7 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
             </div>
 
             {isMomo && (
-              <BkField label="MTN phone number" htmlFor="pay-phone" hint="They get a prompt on this phone" error={show("phone", phone)}>
+              <BkField label={`${networkName} phone number`} htmlFor="pay-phone" hint="They get a prompt on this phone" error={show("phone", phone)}>
                 <div className="flex min-w-0">
                   <span className="bk-box bk-fill-yellow bk-display flex shrink-0 items-center border-r-0 px-3 text-sm font-bold">+250</span>
                   <input
@@ -292,7 +299,7 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
                     value={phone}
                     aria-invalid={!!show("phone", phone)}
                     onChange={(e) => setPhone(e.target.value.replace(/[^\d+ ]/g, "").slice(0, 16))}
-                    placeholder="078 123 4567"
+                    placeholder={network === "AIRTEL" ? "073 123 4567" : "078 123 4567"}
                     autoComplete="tel"
                   />
                 </div>
@@ -327,11 +334,13 @@ export function CheckoutPanel({ scope, testMode = true, onChange }: CheckoutPane
                   We sent a request for <b>{rwf(payment.amountRwf)}</b> to <b>{payment.customerPhone}</b>.
                 </p>
                 <ol className="bk-box mt-5 w-full max-w-sm divide-y-2 divide-[var(--bk-ink)] text-left text-sm font-medium">
-                  <li className="px-3 py-2">1. Open the MTN MoMo prompt</li>
+                  <li className="px-3 py-2">1. Open the {payment.channel === "AIRTEL" ? "Airtel Money" : "MTN MoMo"} prompt</li>
                   <li className="px-3 py-2">2. Enter your MoMo PIN</li>
                   <li className="px-3 py-2">3. This screen updates by itself</li>
                 </ol>
-                <p className="bk-muted mt-3 text-xs">No prompt? Dial *182*7*1# to see pending approvals.</p>
+                <p className="bk-muted mt-3 text-xs">
+                  {payment.channel === "AIRTEL" ? "No prompt? Dial *182# on Airtel to check." : "No prompt? Dial *182*7*1# to see pending approvals."}
+                </p>
               </>
             ) : (
               <>

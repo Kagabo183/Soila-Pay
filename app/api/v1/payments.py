@@ -52,6 +52,7 @@ from app.services.lmbtech_client import LMBTechError
 from app.services.payment_service import (
     DISBURSEMENT,
     CashoutSetupError,
+    ChannelUnavailableError,
     DuplicateReferenceError,
     InsufficientBalanceError,
     PaymentService,
@@ -129,6 +130,8 @@ async def _create(request: Request, body: PaymentCreate, integrator: Optional[di
         row = await service.create(body, integrator)
     except DuplicateReferenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ChannelUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return payment_out(row, admin=admin)
 
 
@@ -225,6 +228,8 @@ async def _summary(
         total_count=int(row["total_count"]),
         gateway_configured=service.gateway_configured,
         payouts_configured=service.payouts_configured,
+        airtel_available=service.momo_via_kitovu or PaymentService.is_sandbox(integrator),
+        momo_gateway="KITOVU" if service.momo_via_kitovu else "LMBTECH",
         test_mode=is_test,
         account_test_mode=_mode_is_test(request, integrator),
     )
@@ -305,11 +310,12 @@ async def _pricing_out(request: Request) -> PaymentPricingOut:
                 effective_fee_percentage=float(pay_fee),
                 payout_fee_percentage=_num(r.get("payout_fee_percentage")),
                 effective_payout_fee_percentage=float(payout_fee),
-                below_cost=pay_fee < pricing.gateway_cost_percentage or payout_fee < pricing.payout_cost_percentage,
+                below_cost=pay_fee < pricing.collection_cost_floor or payout_fee < pricing.payout_cost_percentage,
             )
         )
     return PaymentPricingOut(
         gateway_cost_percentage=float(pricing.gateway_cost_percentage),
+        momo_cost_percentage=float(pricing.momo_cost_percentage),
         default_fee_percentage=float(pricing.default_fee_percentage),
         payout_cost_percentage=float(pricing.payout_cost_percentage),
         payout_default_fee_percentage=float(pricing.payout_default_fee_percentage),
@@ -610,16 +616,18 @@ async def admin_get_pricing(request: Request):
 @admin_router.put("/pricing", response_model=PaymentPricingOut)
 async def admin_set_pricing(body: PaymentPricing, request: Request):
     for fee, cost, what in (
-        (body.default_fee_percentage, body.gateway_cost_percentage, "collection"),
+        (body.default_fee_percentage, body.gateway_cost_percentage, "card collection (LMBTech)"),
+        (body.default_fee_percentage, body.momo_cost_percentage, "MoMo collection (Kitovu)"),
         (body.payout_default_fee_percentage, body.payout_cost_percentage, "payout"),
     ):
         if fee < cost:
             raise HTTPException(
                 status_code=400,
-                detail=f"Default {what} fee {fee}% is below LMBTech's {cost}% cost - every {what} would lose money.",
+                detail=f"Default fee {fee}% is below the {cost}% {what} cost - every one would lose money.",
             )
     await _service(request).set_pricing(
         gateway_cost_percentage=Decimal(str(body.gateway_cost_percentage)),
+        momo_cost_percentage=Decimal(str(body.momo_cost_percentage)),
         default_fee_percentage=Decimal(str(body.default_fee_percentage)),
         payout_cost_percentage=Decimal(str(body.payout_cost_percentage)),
         payout_default_fee_percentage=Decimal(str(body.payout_default_fee_percentage)),

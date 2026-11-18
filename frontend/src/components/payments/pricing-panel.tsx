@@ -11,7 +11,7 @@ const EXAMPLE = 10000;
 const num = (s: string) => Number(s) || 0;
 const clean = (s: string) => s.replace(/[^\d.]/g, "");
 
-function Example({ label, fee, cost }: { label: string; fee: number; cost: number }) {
+function Example({ label, fee, cost, who = "LMBTech" }: { label: string; fee: number; cost: number; who?: string }) {
   const f = (EXAMPLE * fee) / 100;
   const c = (EXAMPLE * cost) / 100;
   return (
@@ -22,7 +22,7 @@ function Example({ label, fee, cost }: { label: string; fee: number; cost: numbe
       <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1">
         <dt>Integrator fee ({fee}%)</dt>
         <dd className="text-right font-semibold">+{rwf(f)}</dd>
-        <dt>LMBTech cost ({cost}%)</dt>
+        <dt>{who} cost ({cost}%)</dt>
         <dd className="text-right font-semibold">−{rwf(c)}</dd>
         <dt className="bk-display font-bold">You keep</dt>
         <dd className={cn("bk-display text-right font-bold", f - c < 0 && "text-destructive")}>{rwf(f - c)}</dd>
@@ -31,12 +31,13 @@ function Example({ label, fee, cost }: { label: string; fee: number; cost: numbe
   );
 }
 
-/** Admin: what LMBTech takes on collections and payouts, the default fees
- * integrators pay, and per-integrator overrides. The server refuses any fee
- * below LMBTech's cost, so a typo here can't make transactions lose money. */
+/** Admin: what each gateway takes (cards: LMBTech, mobile money: Kitovu Pay,
+ * payouts: LMBTech), the default fees integrators pay, and per-integrator
+ * overrides. The server refuses any fee below a gateway's cost, so a typo
+ * here can't make transactions lose money. */
 export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => void; /** bump to reload (e.g. after an integrator is added) */ reloadToken?: number }) {
   const [pricing, setPricing] = React.useState<PaymentPricing | null>(null);
-  const [form, setForm] = React.useState({ cost: "", fee: "", payoutCost: "", payoutFee: "" });
+  const [form, setForm] = React.useState({ cost: "", momoCost: "", fee: "", payoutCost: "", payoutFee: "" });
   const [saving, setSaving] = React.useState(false);
   const [rows, setRows] = React.useState<Record<number, { collection: string; payout: string }>>({});
   const [rowSaving, setRowSaving] = React.useState<number | null>(null);
@@ -47,6 +48,7 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
       setPricing(p);
       setForm({
         cost: String(p.gatewayCostPercentage),
+        momoCost: String(p.momoCostPercentage),
         fee: String(p.defaultFeePercentage),
         payoutCost: String(p.payoutCostPercentage),
         payoutFee: String(p.payoutDefaultFeePercentage),
@@ -72,7 +74,9 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
     load();
   }, [load, reloadToken]);
 
-  const feeError = form.fee && num(form.fee) < num(form.cost) ? `Must be at least ${num(form.cost)}%` : null;
+  // One collection fee covers cards and MoMo, so it must clear the higher cost.
+  const collectionFloor = Math.max(num(form.cost), num(form.momoCost));
+  const feeError = form.fee && num(form.fee) < collectionFloor ? `Must be at least ${collectionFloor}%` : null;
   const payoutError = form.payoutFee && num(form.payoutFee) < num(form.payoutCost) ? `Must be at least ${num(form.payoutCost)}%` : null;
 
   async function save(e: React.FormEvent) {
@@ -82,6 +86,7 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
     try {
       const p = await paymentService.setPricing({
         gatewayCostPercentage: num(form.cost),
+        momoCostPercentage: num(form.momoCost),
         defaultFeePercentage: num(form.fee),
         payoutCostPercentage: num(form.payoutCost),
         payoutDefaultFeePercentage: num(form.payoutFee),
@@ -130,8 +135,11 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
       <BkPanel title="Pricing" tone="bk-fill-orange">
         <form onSubmit={save} className="flex flex-col gap-5">
           <div className="grid gap-4 sm:grid-cols-2">
-            <BkField label="LMBTech cost - collections (%)" htmlFor="pr-cost" hint="Taken from every card / MoMo payment.">
+            <BkField label="LMBTech cost - card payments (%)" htmlFor="pr-cost" hint="Taken from every Visa / Mastercard / card payment.">
               <input id="pr-cost" inputMode="decimal" className="bk-input" value={form.cost} onChange={field("cost")} />
+            </BkField>
+            <BkField label="Kitovu cost - mobile money (%)" htmlFor="pr-mcost" hint="Taken from every MTN / Airtel payment (Kitovu Pay).">
+              <input id="pr-mcost" inputMode="decimal" className="bk-input" value={form.momoCost} onChange={field("momoCost")} />
             </BkField>
             <BkField label="Default fee - collections (%)" htmlFor="pr-fee" error={feeError}>
               <input id="pr-fee" inputMode="decimal" aria-invalid={!!feeError} className="bk-input" value={form.fee} onChange={field("fee")} />
@@ -144,7 +152,8 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
             </BkField>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Example label="Customer pays" fee={num(form.fee)} cost={num(form.cost)} />
+            <Example label="Card payment of" fee={num(form.fee)} cost={num(form.cost)} />
+            <Example label="MoMo payment of" fee={num(form.fee)} cost={num(form.momoCost)} who="Kitovu" />
             <Example label="Payout of" fee={num(form.payoutFee)} cost={num(form.payoutCost)} />
           </div>
           <button type="submit" disabled={saving || !!feeError || !!payoutError} className="bk-btn bk-fill-green self-start">
@@ -157,7 +166,7 @@ export function PricingPanel({ onSaved, reloadToken = 0 }: { onSaved?: () => voi
         {below.length > 0 && (
           <p className="bk-box bk-fill-red mb-4 flex items-start gap-2 p-3 text-sm font-semibold">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            Priced below LMBTech&apos;s cost: {below.map((i) => i.name).join(", ")}.
+            Priced below a gateway&apos;s cost: {below.map((i) => i.name).join(", ")}.
           </p>
         )}
         {pricing.integrators.length === 0 ? (

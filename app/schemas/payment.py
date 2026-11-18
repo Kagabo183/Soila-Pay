@@ -3,14 +3,17 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
-# What the customer picks. MTN_MOMO -> MTN Mobile Money; the card options all
-# go to the same hosted card page (Visa, Mastercard, and anything else
-# Pesapal accepts) - the choice is recorded so dashboards can show it.
-PaymentChannel = Literal["MTN_MOMO", "VISA", "MASTERCARD", "OTHER_CARD"]
+# What the customer picks. MTN_MOMO / AIRTEL_MONEY -> mobile money (Kitovu
+# Pay; MTN can also fall back to LMBTech); the card options all go to
+# LMBTech's hosted card page (Visa, Mastercard, and anything else Pesapal
+# accepts) - the choice is recorded so dashboards can show it.
+PaymentChannel = Literal["MTN_MOMO", "AIRTEL_MONEY", "VISA", "MASTERCARD", "OTHER_CARD"]
 PaymentStatus = Literal["PENDING", "SUCCESS", "FAILED", "CANCELLED"]
 
 CARD_CHANNELS = {"VISA", "MASTERCARD", "OTHER_CARD"}
+MOMO_CHANNELS = {"MTN_MOMO", "AIRTEL_MONEY"}
 _MTN_PREFIXES = ("78", "79")
+_AIRTEL_PREFIXES = ("72", "73")
 
 
 def normalize_rw_phone(value: str) -> str:
@@ -31,7 +34,7 @@ class PaymentCreate(BaseModel):
     amount_rwf: int = Field(..., ge=100, le=5_000_000, description="Whole Rwandan francs")
     customer_name: str = Field(..., min_length=2, max_length=120)
     customer_email: str = Field(..., max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-    # Required for MTN_MOMO only.
+    # Required for MTN_MOMO / AIRTEL_MONEY.
     customer_phone: Optional[str] = None
     description: str = Field(default="payment", max_length=120)
     # Optional: your own reference (unique). Generated if omitted.
@@ -46,12 +49,16 @@ class PaymentCreate(BaseModel):
 
     @model_validator(mode="after")
     def _phone_for_momo(self) -> "PaymentCreate":
-        if self.channel == "MTN_MOMO":
+        if self.channel in MOMO_CHANNELS:
             if not self.customer_phone:
                 raise ValueError("Phone number is required for Mobile Money")
             phone = normalize_rw_phone(self.customer_phone)
-            if not phone[4:].startswith(_MTN_PREFIXES):
+            # Refuse a number on the other network now, instead of sending a
+            # prompt that never reaches the customer's phone.
+            if self.channel == "MTN_MOMO" and not phone[4:].startswith(_MTN_PREFIXES):
                 raise ValueError("MTN numbers start with 078 or 079")
+            if self.channel == "AIRTEL_MONEY" and not phone[4:].startswith(_AIRTEL_PREFIXES):
+                raise ValueError("Airtel numbers start with 072 or 073")
             self.customer_phone = phone
         elif self.customer_phone:
             self.customer_phone = normalize_rw_phone(self.customer_phone)
@@ -169,6 +176,10 @@ class PaymentSummary(BaseModel):
     total_count: int
     gateway_configured: bool
     payouts_configured: bool
+    # Airtel Money can be offered (Kitovu is on, or this is the sandbox).
+    airtel_available: bool = False
+    # Who handles MoMo collections right now: KITOVU or LMBTECH.
+    momo_gateway: str = "LMBTECH"
     # Which ledger these numbers are from (the screen's Live/Test choice).
     test_mode: bool
     # Where NEW payments/payouts from this account go right now (test or
@@ -187,9 +198,12 @@ class PaymentSummary(BaseModel):
 
 
 class PaymentPricing(BaseModel):
-    """Admin: LMBTech's cut and the default fees integrators pay."""
+    """Admin: what each gateway takes and the default fees integrators pay.
+    gateway_cost_percentage = cards (LMBTech); momo_cost_percentage = mobile
+    money collections (Kitovu Pay)."""
 
     gateway_cost_percentage: float = Field(..., ge=0, lt=100)
+    momo_cost_percentage: float = Field(default=3.0, ge=0, lt=100)
     default_fee_percentage: float = Field(..., gt=0, lt=100)
     payout_cost_percentage: float = Field(..., ge=0, lt=100)
     payout_default_fee_percentage: float = Field(..., gt=0, lt=100)

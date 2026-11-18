@@ -230,8 +230,9 @@ function isFromSoilaPay(rawBody, signatureHeader, secret) {
               <b>Cards</b> (<code className="font-mono">VISA</code>, <code className="font-mono">MASTERCARD</code>,{" "}
               <code className="font-mono">OTHER_CARD</code>): send the customer to <code className="font-mono">redirect_url</code> to type their card
               on the bank&apos;s secure page. Afterwards they come back to your <code className="font-mono">return_url</code>.{" "}
-              <b>MTN MoMo</b> (<code className="font-mono">MTN_MOMO</code>): add <code className="font-mono">customer_phone</code>; the customer
-              approves on their phone.
+              <b>Mobile money</b> (<code className="font-mono">MTN_MOMO</code> for 078/079 numbers,{" "}
+              <code className="font-mono">AIRTEL_MONEY</code> for 072/073): add <code className="font-mono">customer_phone</code>; the customer
+              approves on their phone. A number on the other network is refused straight away (400).
             </p>
             <div className="grid gap-4 lg:grid-cols-2">
               <Code title="Card payment" code={collectCard} />

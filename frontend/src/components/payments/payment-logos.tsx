@@ -15,6 +15,14 @@ export function MtnMomoLogo({ className }: { className?: string }) {
   );
 }
 
+export function AirtelMoneyLogo({ className }: { className?: string }) {
+  return (
+    <span className={cn(sticker, "bg-[#e40000] text-[11px] font-black leading-none text-white", className)} aria-label="Airtel Money">
+      airtel
+    </span>
+  );
+}
+
 export function VisaLogo({ className }: { className?: string }) {
   return (
     <span className={cn(sticker, "bg-[#1a1f71] text-lg font-extrabold italic tracking-tight text-white", className)} aria-label="Visa">
@@ -58,6 +66,9 @@ export function ChannelLogo({ channel, className }: { channel: string; className
     case "MTN":
     case "MTN_MOMO":
       return <MtnMomoLogo className={className} />;
+    case "AIRTEL":
+    case "AIRTEL_MONEY":
+      return <AirtelMoneyLogo className={className} />;
     case "VISA":
       return <VisaLogo className={className} />;
     case "MASTERCARD":
@@ -74,6 +85,9 @@ export function channelLabel(channel: string): string {
     case "MTN":
     case "MTN_MOMO":
       return "MTN Mobile Money";
+    case "AIRTEL":
+    case "AIRTEL_MONEY":
+      return "Airtel Money";
     case "VISA":
       return "Visa";
     case "MASTERCARD":
@@ -89,6 +103,9 @@ export function channelFill(channel: string): string {
     case "MTN":
     case "MTN_MOMO":
       return "bk-fill-yellow";
+    case "AIRTEL":
+    case "AIRTEL_MONEY":
+      return "bk-fill-red";
     case "VISA":
       return "bk-fill-blue";
     case "MASTERCARD":
