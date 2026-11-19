@@ -235,6 +235,8 @@ def _mode_is_test(request: Request, integrator: Optional[dict]) -> bool:
 
 # ?mode=live|test picks the ledger a screen shows; omitted = the default above.
 ViewMode = Optional[Literal["live", "test"]]
+# Admin filter: one integrator's transactions (0 = the console's own).
+IntegratorFilter = Optional[int]
 
 
 def _view_is_test(request: Request, integrator: Optional[dict], mode: ViewMode) -> bool:
@@ -246,13 +248,18 @@ def _view_is_test(request: Request, integrator: Optional[dict], mode: ViewMode) 
 
 
 async def _summary(
-    request: Request, integrator: Optional[dict], direction: Optional[str] = None, mode: ViewMode = None
+    request: Request,
+    integrator: Optional[dict],
+    direction: Optional[str] = None,
+    mode: ViewMode = None,
+    filter_id: Optional[int] = None,
 ) -> PaymentSummary:
-    """integrator=None -> admin view across everyone, with cost + margin."""
+    """integrator=None -> admin view across everyone (or one integrator with
+    filter_id; 0 = the console's own), with cost + margin."""
     service = _service(request)
     repo = request.app.state.payment_repo
     is_test = _view_is_test(request, integrator, mode)
-    row = await repo.summary(integrator["id"] if integrator else None, direction, is_test=is_test)
+    row = await repo.summary(integrator["id"] if integrator else filter_id, direction, is_test=is_test)
     pricing = await service.pricing()
     summary = PaymentSummary(
         collected_rwf=float(row["collected_rwf"]),
@@ -286,11 +293,16 @@ async def _summary(
 
 
 async def _period(
-    request: Request, integrator: Optional[dict], date_from: Optional[date], date_to: Optional[date], mode: ViewMode = None
+    request: Request,
+    integrator: Optional[dict],
+    date_from: Optional[date],
+    date_to: Optional[date],
+    mode: ViewMode = None,
+    filter_id: Optional[int] = None,
 ) -> PeriodSummary:
     repo = request.app.state.payment_repo
     is_test = _view_is_test(request, integrator, mode)
-    t = await repo.range_totals(integrator["id"] if integrator else None, date_from, date_to, is_test=is_test)
+    t = await repo.range_totals(integrator["id"] if integrator else filter_id, date_from, date_to, is_test=is_test)
     net, withdrawn = float(t["net_rwf"]), float(t["withdrawn_rwf"])
     return PeriodSummary(
         date_from=date_from.isoformat() if date_from else None,
@@ -305,9 +317,11 @@ async def _period(
     )
 
 
-async def _overview(request: Request, integrator: Optional[dict], days: int, mode: ViewMode = None) -> Overview:
+async def _overview(
+    request: Request, integrator: Optional[dict], days: int, mode: ViewMode = None, filter_id: Optional[int] = None
+) -> Overview:
     repo = request.app.state.payment_repo
-    integrator_id = integrator["id"] if integrator else None
+    integrator_id = integrator["id"] if integrator else filter_id
     is_test = _view_is_test(request, integrator, mode)
     data = await repo.overview(days, integrator_id, is_test=is_test)
     today = data["today"]
@@ -695,13 +709,15 @@ async def admin_create_payment(
 
 
 @admin_router.get("/summary", response_model=PaymentSummary)
-async def admin_summary(request: Request, direction: DirectionFilter = None, mode: ViewMode = None):
-    return await _summary(request, None, direction, mode)
+async def admin_summary(request: Request, direction: DirectionFilter = None, mode: ViewMode = None, integrator_id: IntegratorFilter = None):
+    return await _summary(request, None, direction, mode, filter_id=integrator_id)
 
 
 @admin_router.get("/overview", response_model=Overview)
-async def admin_overview(request: Request, days: int = Query(default=14, ge=1, le=90), mode: ViewMode = None):
-    return await _overview(request, None, days, mode)
+async def admin_overview(
+    request: Request, days: int = Query(default=14, ge=1, le=90), mode: ViewMode = None, integrator_id: IntegratorFilter = None
+):
+    return await _overview(request, None, days, mode, filter_id=integrator_id)
 
 
 @admin_router.get("/pricing", response_model=PaymentPricingOut)
@@ -736,9 +752,13 @@ async def admin_set_pricing(body: PaymentPricing, request: Request):
 
 @admin_router.get("/period", response_model=PeriodSummary)
 async def admin_period(
-    request: Request, date_from: Optional[date] = None, date_to: Optional[date] = None, mode: ViewMode = None
+    request: Request,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    mode: ViewMode = None,
+    integrator_id: IntegratorFilter = None,
 ):
-    return await _period(request, None, date_from, date_to, mode)
+    return await _period(request, None, date_from, date_to, mode, filter_id=integrator_id)
 
 
 @admin_router.post("/{reference_id}/settle", response_model=PaymentOut)
@@ -808,9 +828,10 @@ async def admin_list_payments(
     date_to: Optional[date] = None,
     cashout: Optional[bool] = None,
     mode: ViewMode = None,
+    integrator_id: IntegratorFilter = None,
 ):
     return await _list(
-        request, page, page_size, None, direction=direction, status=status, method=method, q=q, admin=True,
+        request, page, page_size, integrator_id, direction=direction, status=status, method=method, q=q, admin=True,
         date_from=date_from, date_to=date_to, cashout=cashout, is_test=_view_is_test(request, None, mode),
     )
 
@@ -843,6 +864,7 @@ async def admin_reconciliation_report(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     mode: ViewMode = None,
+    integrator_id: IntegratorFilter = None,
 ):
     """Everything an admin needs to reconcile one ledger (live or test) for a
     period: totals; per gateway (aggregator), per method, per gateway+method,
@@ -851,7 +873,7 @@ async def admin_reconciliation_report(
     transactions that need a look."""
     is_test = _view_is_test(request, None, mode)
     data = await payment_repo_module.reconciliation(
-        request.app.state.db_pool, date_from=date_from, date_to=date_to, is_test=is_test
+        request.app.state.db_pool, date_from=date_from, date_to=date_to, is_test=is_test, integrator_id=integrator_id
     )
     report = {k: ([_num_dict(r) for r in v] if isinstance(v, list) else _num_dict(v)) for k, v in data.items()}
     for b in report["balances"]:

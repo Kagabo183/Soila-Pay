@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Plus, Pencil, Copy, TrendingUp, ArrowUpRight, Users, Wallet, FileText } from "lucide-react";
 import { PricingPanel } from "@/components/payments/pricing-panel";
+import { useIntegratorFilterStore } from "@/store/integrator-filter-store";
 import { NewIntegratorDialog } from "@/components/integrators/new-integrator-dialog";
 import { EditIntegratorDialog } from "@/components/integrators/edit-integrator-dialog";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -133,7 +134,11 @@ export default function IntegratorsPage() {
     toast({ title: "API key copied", variant: "default" });
   }
 
-  const totals = summary.reduce(
+  // The integrator filter in the top bar narrows both tables to that one.
+  const filterId = useIntegratorFilterStore((st) => st.id);
+  const shownSummary = filterId === null ? summary : summary.filter((r) => Number(r.integratorId) === filterId);
+  const shownIntegrators = filterId === null ? integrators : integrators.filter((i) => Number(i.id) === filterId);
+  const totals = shownSummary.reduce(
     (acc, s) => ({
       collected: acc.collected + s.totalCollectedRwf,
       disbursed: acc.disbursed + s.totalDisbursedRwf,
@@ -338,7 +343,7 @@ export default function IntegratorsPage() {
         <CardContent>
           <DataTable
             columns={columns}
-            data={integrators}
+            data={shownIntegrators}
             loading={loading}
             rowKey={(row) => String(row.id)}
             emptyMessage="No integrators yet - create one to issue an Integrator-Key."
@@ -358,7 +363,7 @@ export default function IntegratorsPage() {
         <CardContent>
           <DataTable
             columns={summaryColumns}
-            data={summary}
+            data={shownSummary}
             loading={loading}
             rowKey={(row) => String(row.integratorId)}
             emptyMessage="No successful transactions yet."

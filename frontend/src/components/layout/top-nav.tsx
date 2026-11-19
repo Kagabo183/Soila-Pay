@@ -11,6 +11,7 @@ import { authService } from "@/services/auth.service";
 import { paymentService } from "@/services/payment.service";
 import { MOCK_MODE } from "@/lib/mock";
 import { MoneyViewToggle } from "@/components/layout/money-view-toggle";
+import { IntegratorFilter } from "@/components/layout/integrator-filter";
 import { useMoneyViewStore } from "@/store/money-view-store";
 
 export function TopNav() {
@@ -54,6 +55,7 @@ export function TopNav() {
           </StatusBadge>
         )}
         <MoneyViewToggle kind="admin" />
+        <IntegratorFilter />
         <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
           {MOCK_MODE ? (
             <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />

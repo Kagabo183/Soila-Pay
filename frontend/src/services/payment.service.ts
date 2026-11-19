@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/axios";
 import { currentMoneyView } from "@/store/money-view-store";
+import { currentIntegratorFilter } from "@/store/integrator-filter-store";
 
 /** Everything money-related goes through LMBTech, on the real API only (no
  * mocks): collections (cards first - Visa, Mastercard, other - plus MTN
@@ -277,6 +278,12 @@ function mode(scope: PaymentScope) {
   return currentMoneyView(scope.kind);
 }
 
+/** Admin: the integrator filter in the top bar (undefined = everyone). */
+function who(scope: PaymentScope): number | undefined {
+  if (scope.kind !== "admin") return undefined;
+  return currentIntegratorFilter() ?? undefined;
+}
+
 function headers(scope: PaymentScope) {
   return scope.kind === "portal" ? { Authorization: `Bearer ${scope.token}` } : undefined;
 }
@@ -363,6 +370,7 @@ export const paymentService = {
         date_to: query.dateTo || undefined,
         cashout: query.cashout,
         mode: mode(scope),
+        integrator_id: who(scope),
       },
     });
     return { items: data.items.map(fromApi), total: data.total, page: data.page, pageSize: data.page_size };
@@ -372,7 +380,7 @@ export const paymentService = {
   async period(scope: PaymentScope, dateFrom?: string, dateTo?: string): Promise<PeriodSummary> {
     const { data } = await apiClient.get(`${base(scope)}/period`, {
       headers: headers(scope),
-      params: { date_from: dateFrom || undefined, date_to: dateTo || undefined, mode: mode(scope) },
+      params: { date_from: dateFrom || undefined, date_to: dateTo || undefined, mode: mode(scope), integrator_id: who(scope) },
     });
     return {
       availableBalanceRwf: data.available_balance_rwf ?? null,
@@ -402,7 +410,7 @@ export const paymentService = {
   },
 
   async summary(scope: PaymentScope, direction?: Direction): Promise<PaymentSummary> {
-    const { data } = await apiClient.get(`${base(scope)}/summary`, { headers: headers(scope), params: { direction, mode: mode(scope) } });
+    const { data } = await apiClient.get(`${base(scope)}/summary`, { headers: headers(scope), params: { direction, mode: mode(scope), integrator_id: who(scope) } });
     return {
       collectedRwf: data.collected_rwf,
       disbursedRwf: data.disbursed_rwf,
@@ -432,7 +440,7 @@ export const paymentService = {
   },
 
   async overview(scope: PaymentScope, days = 14): Promise<Overview> {
-    const { data } = await apiClient.get(`${base(scope)}/overview`, { headers: headers(scope), params: { days, mode: mode(scope) } });
+    const { data } = await apiClient.get(`${base(scope)}/overview`, { headers: headers(scope), params: { days, mode: mode(scope), integrator_id: who(scope) } });
     return {
       days: data.days,
       series: data.series,

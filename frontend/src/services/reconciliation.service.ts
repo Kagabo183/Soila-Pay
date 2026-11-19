@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/axios";
 import { currentMoneyView } from "@/store/money-view-store";
+import { currentIntegratorFilter } from "@/store/integrator-filter-store";
 
 /** Money columns shared by every breakdown (SUCCESS only; pending/failed counted apart). */
 export interface ReconMoney {
@@ -67,7 +68,7 @@ export const reconciliationService = {
   /** One ledger (the Live / Test switch in the top bar) for a period. */
   async report(dateFrom?: string, dateTo?: string): Promise<ReconReport> {
     const { data } = await apiClient.get("/api/v1/admin/payments/reconciliation/report", {
-      params: { date_from: dateFrom || undefined, date_to: dateTo || undefined, mode: currentMoneyView("admin") },
+      params: { date_from: dateFrom || undefined, date_to: dateTo || undefined, mode: currentMoneyView("admin"), integrator_id: currentIntegratorFilter() ?? undefined },
     });
     return data;
   },

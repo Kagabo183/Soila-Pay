@@ -39,7 +39,9 @@ def _where(
     if cashout is not None:
         clauses.append("p.is_cashout = %s")
         args.append(int(cashout))
-    if integrator_id is not None:
+    if integrator_id == 0:  # admin filter: the console's own transactions
+        clauses.append("p.integrator_id IS NULL")
+    elif integrator_id is not None:
         clauses.append("p.integrator_id = %s")
         args.append(integrator_id)
     if direction:
@@ -580,13 +582,21 @@ async def _rows(cur, sql: str, args) -> list[dict]:
     return list(await cur.fetchall())
 
 
-async def reconciliation(pool, *, date_from: Optional[date], date_to: Optional[date], is_test: bool) -> dict:
+async def reconciliation(
+    pool, *, date_from: Optional[date], date_to: Optional[date], is_test: bool, integrator_id: Optional[int] = None
+) -> dict:
     """Every way to slice the money for one ledger (live or test) and period:
     totals, per gateway, per method, per gateway+method, per source, per
     integrator (with what each is owed right now, all time), per day, and the
     transactions that need a look."""
-    where, args = _where(date_from=date_from, date_to=date_to, is_test=is_test)
+    where, args = _where(date_from=date_from, date_to=date_to, is_test=is_test, integrator_id=integrator_id)
     base = f"FROM payments p LEFT JOIN integrators i ON i.id = p.integrator_id {where}"
+    # Balances: everyone, one integrator, or nobody (console filter).
+    bal_filter, bal_args = "", []
+    if integrator_id == 0:
+        bal_filter = "WHERE 1 = 0"
+    elif integrator_id is not None:
+        bal_filter, bal_args = "WHERE i.id = %s", [integrator_id]
     out: dict = {}
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -613,11 +623,12 @@ async def reconciliation(pool, *, date_from: Optional[date], date_to: Optional[d
                   MAX(p.created_at) AS last_activity
                 FROM integrators i
                 LEFT JOIN payments p ON p.integrator_id = i.id AND p.is_test = %s
+                {bal_filter}
                 GROUP BY i.id, i.name, i.account_mode
                 ) b
                 WHERE earned_net > 0 OR spent > 0 OR reserved > 0
                 ORDER BY earned_net - spent - reserved DESC
-                """, (int(is_test),))
+                """.replace("{bal_filter}", bal_filter), (int(is_test), *bal_args))
 
             # Needs a look: stuck, corrected by a gateway check, added by hand,
             # or sold below cost.
