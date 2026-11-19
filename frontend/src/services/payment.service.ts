@@ -577,55 +577,6 @@ export function toApiBody(payload: PaymentCreatePayload) {
   };
 }
 
-export interface RawCall {
-  ok: boolean;
-  httpStatus: number | null;
-  ms: number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  body: any;
-}
-
-async function rawCall(fn: () => Promise<{ status: number; data: unknown }>): Promise<RawCall> {
-  const t0 = performance.now();
-  try {
-    const res = await fn();
-    return { ok: true, httpStatus: res.status, ms: Math.round(performance.now() - t0), body: res.data };
-  } catch (e) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const err = e as any;
-    return {
-      ok: false,
-      httpStatus: err?.response?.status ?? null,
-      ms: Math.round(performance.now() - t0),
-      body: err?.response?.data ?? { error: paymentErrorMessage(e) },
-    };
-  }
-}
-
-/** Test Lab helpers: same endpoints, but hand back the raw HTTP status + JSON
- * (including validation errors) instead of throwing, so the lab can show
- * exactly what an integrator would see. */
-/** Test Lab: every payment is created with ?sandbox=true, so it is simulated
- * by Soila Pay and never charges anyone - even from the live admin console. */
-export const paymentLab = {
-  create: (scope: PaymentScope, body: Record<string, unknown>) =>
-    rawCall(() => apiClient.post(base(scope), body, { headers: headers(scope), params: { sandbox: true }, timeout: 45000 })),
-  get: (scope: PaymentScope, referenceId: string) =>
-    rawCall(() => apiClient.get(`${base(scope)}/${encodeURIComponent(referenceId)}`, { headers: headers(scope) })),
-  /** Admin Kitovu test: real requests to Kitovu's TEST gateway (test money). */
-  kitovuLookup: (body: Record<string, unknown>) =>
-    rawCall(() => apiClient.post("/api/v1/admin/payments/momo-lookup", body, { params: { kitovu_test: true }, timeout: 45000 })),
-  kitovuCollect: (body: Record<string, unknown>) =>
-    rawCall(() => apiClient.post("/api/v1/admin/payments", body, { params: { kitovu_test: true }, timeout: 45000 })),
-  kitovuPayout: (body: Record<string, unknown>) =>
-    rawCall(() => apiClient.post("/api/v1/admin/disbursements", body, { params: { kitovu_test: true }, timeout: 45000 })),
-  /** Plays the customer on the sandbox card page (approve with a test card). */
-  cardPage: (referenceId: string, cardNumber: string) =>
-    rawCall(() =>
-      apiClient.post(`/api/v1/payments/sandbox/${encodeURIComponent(referenceId)}/complete`, { approve: true, card_number: cardNumber })
-    ),
-};
-
 /** Display name of the gateway that handled a transaction (admin views). */
 export function gatewayLabel(gateway: string | null | undefined): string {
   switch ((gateway ?? "").toUpperCase()) {
