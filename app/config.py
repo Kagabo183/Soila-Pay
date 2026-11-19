@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Kitovu Pay - MTN MoMo collections (cards stay on LMBTech). Off until
     # MOMO_GATEWAY=kitovu. UAT = Kitovu's test gateway; production is
     # https://gateway.kitovupay.com with production keys.
-    momo_gateway: Literal["lmbtech", "kitovu"] = "lmbtech"
+    momo_gateway: Literal["lmbtech", "kitovu"] = "kitovu"  # MoMo always Kitovu; cards always LMBTech
     kitovupay_base_url: str = "https://gateway.uat.kitovupay.com"
     kitovupay_api_key: str = ""
     kitovupay_api_secret: str = ""

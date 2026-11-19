@@ -214,7 +214,9 @@ class PaymentService:
     @property
     def momo_via_kitovu(self) -> bool:
         return (
-            self._settings.momo_gateway == "kitovu" and self._kitovu is not None and self._kitovu.configured
+            self._settings.momo_gateway == "kitovu"
+            and getattr(self, "_kitovu", None) is not None
+            and self._kitovu.configured
         )
 
     def _kitovu_callback_url(self) -> str:
