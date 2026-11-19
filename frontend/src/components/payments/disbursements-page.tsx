@@ -24,6 +24,7 @@ function payoutPhoneProblem(raw: string, airtel: boolean): string | null {
 
 const isAirtel = (raw: string) => /^7[23]/.test(raw.replace(/\D/g, "").replace(/^250/, "").replace(/^0/, ""));
 import { PaymentsList } from "./payments-list";
+import { MomoNameHint, useMomoName } from "./momo-name";
 
 const MIN = 100;
 const QUICK = [1000, 5000, 10000, 50000];
@@ -99,6 +100,9 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
           : null,
   };
   const valid = !Object.values(errors).some(Boolean);
+  // Whose number is it? (Kitovu's name check, shown under the number.)
+  const fillName = React.useCallback((found: string) => setName((current) => (current.trim().length < 2 ? found : current)), []);
+  const momoName = useMomoName(stableScope, isAirtel(phone) ? "AIRTEL_MONEY" : "MTN_MOMO", phone, errors.phone, fillName);
   const show = (k: keyof typeof errors, v: string) => (touched || v ? errors[k] : null);
 
   function review(e: React.FormEvent) {
@@ -213,6 +217,7 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
                       placeholder="078 123 4567"
                     />
                   </div>
+                  <MomoNameHint state={momoName} />
                 </BkField>
                 <BkField label="Amount" htmlFor="po-amount" error={show("amount", amount)}>
                   <div className="relative">

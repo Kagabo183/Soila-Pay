@@ -13,6 +13,7 @@ import {
   type PaymentScope,
   gatewayLabel,
 } from "@/services/payment.service";
+import { MomoNameHint, useMomoName } from "./momo-name";
 import { AirtelMoneyLogo, MastercardLogo, MtnMomoLogo, OtherCardLogo, VisaLogo, channelFill, channelLabel } from "./payment-logos";
 import { BkField, rwf } from "./brutal";
 
@@ -90,6 +91,9 @@ export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false,
     email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()) ? null : "Enter a valid email, e.g. name@example.com",
     phone: isMomo ? (phone ? phoneProblem(phone, network) : `Enter the ${networkName} number`) : null,
   };
+  // Kitovu's name check, shown under the number as soon as it is complete.
+  const fillName = React.useCallback((found: string) => setName((current) => (current.trim().length < 2 ? found : current)), []);
+  const momoName = useMomoName(scope, isMomo ? channel : null, phone, errors.phone, fillName);
   const canPay = !Object.values(errors).some(Boolean);
   // What the confirm step was computed for; editing any of it asks again.
   const currentKey = `${channel}|${phone}|${amountNum}`;
@@ -308,7 +312,7 @@ export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false,
               <BkField
                 label={isMomo ? "Customer name (optional for MoMo)" : "Customer name"}
                 htmlFor="pay-name"
-                hint={isMomo ? "Filled in from the MoMo account when you continue" : undefined}
+                hint={isMomo ? "Filled in from the MoMo account once the number is typed" : undefined}
                 error={show("name", name)}
               >
                 <input id="pay-name" className="bk-input" value={name} aria-invalid={!!show("name", name)} onChange={(e) => setName(e.target.value)} placeholder="Aline Uwase" autoComplete="name" />
@@ -333,6 +337,7 @@ export function CheckoutPanel({ scope, testMode = true, airtelAvailable = false,
                     autoComplete="tel"
                   />
                 </div>
+                <MomoNameHint state={momoName} />
               </BkField>
             )}
 
