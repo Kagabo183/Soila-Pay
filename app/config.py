@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     kitovupay_api_key: str = ""
     kitovupay_api_secret: str = ""
     kitovupay_timeout_seconds: float = 30.0
+    # Kitovu's TEST (UAT) gateway - only for the admin "Kitovu test" in the
+    # Test Lab, never for real customers. No real money moves there.
+    kitovupay_test_base_url: str = "https://gateway.uat.kitovupay.com"
+    kitovupay_test_api_key: str = ""
+    kitovupay_test_api_secret: str = ""
     # Public URL of THIS API, used to build the callback_url LMBTech posts to.
     # localhost works for local dev only via polling (LMBTech can't reach it).
     public_api_base_url: str = "http://localhost:8000"

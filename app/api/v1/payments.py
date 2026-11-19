@@ -123,13 +123,21 @@ def _service(request: Request) -> PaymentService:
 
 # ---------------------------------------------------------------- shared logic
 
-async def _create(request: Request, body: PaymentCreate, integrator: Optional[dict], *, admin: bool = False) -> PaymentOut:
+async def _create(
+    request: Request,
+    body: PaymentCreate,
+    integrator: Optional[dict],
+    *,
+    admin: bool = False,
+    sandbox_only: bool = False,
+    kitovu_test: bool = False,
+) -> PaymentOut:
     service = _service(request)
     # Sandbox is simulated by Soila Pay and works without LMBTech.
-    if not service.gateway_configured and not service.is_sandbox(integrator):
+    if not service.gateway_configured and not (sandbox_only or kitovu_test) and not service.is_sandbox(integrator):
         raise HTTPException(status_code=503, detail="Payments are not set up yet - add the LMBTech keys in .env")
     try:
-        row = await service.create(body, integrator)
+        row = await service.create(body, integrator, sandbox_only=sandbox_only, kitovu_test=kitovu_test)
     except DuplicateReferenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ChannelUnavailableError as exc:
@@ -138,16 +146,16 @@ async def _create(request: Request, body: PaymentCreate, integrator: Optional[di
 
 
 async def _create_disbursement(
-    request: Request, body: DisbursementCreate, integrator: Optional[dict], *, admin: bool = False
+    request: Request, body: DisbursementCreate, integrator: Optional[dict], *, admin: bool = False, kitovu_test: bool = False
 ) -> PaymentOut:
     service = _service(request)
-    if not service.payouts_configured and not service.is_sandbox(integrator):
+    if not service.payouts_configured and not kitovu_test and not service.is_sandbox(integrator):
         raise HTTPException(
             status_code=503,
             detail="Payouts are not set up yet - add LMBTECH_ACCOUNT_EMAIL (and the LMBTech keys) in .env",
         )
     try:
-        row = await service.create_disbursement(body, integrator)
+        row = await service.create_disbursement(body, integrator, kitovu_test=kitovu_test)
     except DuplicateReferenceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InsufficientBalanceError as exc:
@@ -234,6 +242,7 @@ async def _summary(
         payouts_configured=service.payouts_configured,
         airtel_available=service.momo_via_kitovu or PaymentService.is_sandbox(integrator),
         momo_gateway="KITOVU" if service.momo_via_kitovu else "LMBTECH",
+        kitovu_test_available=integrator is None and service.kitovu_test_available,
         test_mode=is_test,
         account_test_mode=_mode_is_test(request, integrator),
     )
@@ -520,8 +529,13 @@ async def api_get_disbursement(reference_id: str, request: Request, integrator: 
 # ---------------------------------------------------------------- Integrator portal
 
 @portal_router.post("", response_model=PaymentOut, status_code=201)
-async def portal_create_payment(body: PaymentCreate, request: Request, integrator: dict = Depends(_current_integrator)):
-    return await _create(request, body, integrator)
+async def portal_create_payment(
+    body: PaymentCreate,
+    request: Request,
+    sandbox: bool = Query(False, description="Test Lab: simulate it, never real money"),
+    integrator: dict = Depends(_current_integrator),
+):
+    return await _create(request, body, integrator, sandbox_only=sandbox)
 
 
 @portal_router.get("/summary", response_model=PaymentSummary)
@@ -608,8 +622,13 @@ async def portal_create_disbursement(
 # ---------------------------------------------------------------- Admin console
 
 @admin_router.post("", response_model=PaymentOut, status_code=201)
-async def admin_create_payment(body: PaymentCreate, request: Request):
-    return await _create(request, body, None, admin=True)
+async def admin_create_payment(
+    body: PaymentCreate,
+    request: Request,
+    sandbox: bool = Query(False, description="Test Lab: simulate it, never real money"),
+    kitovu_test: bool = Query(False, description="Kitovu test: Kitovu's TEST gateway, recorded as test money"),
+):
+    return await _create(request, body, None, admin=True, sandbox_only=sandbox, kitovu_test=kitovu_test)
 
 
 @admin_router.get("/summary", response_model=PaymentSummary)
@@ -696,8 +715,11 @@ async def admin_import(body: ImportRequest, request: Request):
 
 
 @admin_router.post("/momo-lookup", response_model=MomoLookupOut)
-async def admin_momo_lookup(body: MomoLookupRequest, request: Request):
-    return await _service(request).momo_lookup(body.phone, body.amount_rwf, None)
+async def admin_momo_lookup(body: MomoLookupRequest, request: Request, kitovu_test: bool = Query(False)):
+    try:
+        return await _service(request).momo_lookup(body.phone, body.amount_rwf, None, kitovu_test=kitovu_test)
+    except ChannelUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @admin_router.get("/{reference_id}", response_model=PaymentOut)
@@ -726,7 +748,8 @@ async def admin_list_payments(
 
 
 @admin_disbursement_router.post("", response_model=PaymentOut, status_code=201)
-async def admin_create_disbursement(body: DisbursementCreate, request: Request):
-    """Payout from Soila Pay's own LMBTech balance (no integrator balance check;
-    LMBTech refuses with 402 if the account balance is too low)."""
-    return await _create_disbursement(request, body, None, admin=True)
+async def admin_create_disbursement(body: DisbursementCreate, request: Request, kitovu_test: bool = Query(False)):
+    """Payout from Soila Pay's own gateway balance (no integrator balance check;
+    the gateway refuses if the account balance is too low). kitovu_test: send
+    it on Kitovu's TEST gateway instead (test money)."""
+    return await _create_disbursement(request, body, None, admin=True, kitovu_test=kitovu_test)

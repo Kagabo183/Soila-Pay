@@ -14,7 +14,7 @@ export default function TransactionsPage() {
       reloadToken={reload}
       scope={{ kind: "admin" }}
       title="Transactions"
-      subtitle="Every collection, payout and cash-out across all integrators - with the fee charged, LMBTech's cost and your margin."
+      subtitle="Every collection, payout and cash-out across all integrators - with the fee charged, the gateway's cost and your margin."
     >
       <ReconcilePanel onChanged={() => setReload((k) => k + 1)} />
     </PaymentsStatement>

@@ -181,6 +181,8 @@ class PaymentSummary(BaseModel):
     airtel_available: bool = False
     # Who handles MoMo collections right now: KITOVU or LMBTECH.
     momo_gateway: str = "LMBTECH"
+    # Admin: Kitovu's TEST gateway is set up (Test Lab "Kitovu test").
+    kitovu_test_available: bool = False
     # Which ledger these numbers are from (the screen's Live/Test choice).
     test_mode: bool
     # Where NEW payments/payouts from this account go right now (test or

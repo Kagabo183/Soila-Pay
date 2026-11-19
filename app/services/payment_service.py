@@ -153,6 +153,7 @@ class PaymentService:
         webhook_repo: IntegratorWebhookRepo,
         integrator_repo: IntegratorRepo,
         kitovu: Optional[KitovuClient] = None,
+        kitovu_test: Optional[KitovuClient] = None,
     ):
         self._settings = settings
         self._repo = repo
@@ -160,6 +161,8 @@ class PaymentService:
         # MoMo collections go to Kitovu Pay when MOMO_GATEWAY=kitovu (cards
         # and payouts stay on LMBTech).
         self._kitovu = kitovu
+        # Kitovu's TEST gateway: admin "Kitovu test" only, recorded as test money.
+        self._kitovu_test = kitovu_test
         self._webhook_repo = webhook_repo
         self._integrator_repo = integrator_repo
         # One payout at a time per integrator, so two concurrent payouts can't
@@ -219,6 +222,14 @@ class PaymentService:
             and self._kitovu.configured
         )
 
+    @property
+    def kitovu_test_available(self) -> bool:
+        kv = getattr(self, "_kitovu_test", None)
+        return kv is not None and kv.configured
+
+    def _kitovu_for(self, test: bool) -> Optional[KitovuClient]:
+        return getattr(self, "_kitovu_test", None) if test else getattr(self, "_kitovu", None)
+
     def _kitovu_callback_url(self) -> str:
         return f"{self._settings.public_api_base_url.rstrip('/')}/api/v1/payments/callback/kitovu"
 
@@ -234,24 +245,27 @@ class PaymentService:
                 return candidate
         raise KitovuError("Could not allocate a Kitovu reference - try again")
 
-    async def momo_lookup(self, phone: str, amount_rwf: int, integrator: Optional[dict]) -> dict:
+    async def momo_lookup(self, phone: str, amount_rwf: int, integrator: Optional[dict], *, kitovu_test: bool = False) -> dict:
         """Confirm step before a MoMo charge: the wallet's registered name and
         the fee, like Kitovu's own "New Collection" screen. Never fails the
         checkout - if a lookup can't be done, verified is False."""
         out = {"phone": phone, "account_name": None, "verified": False, "amount_rwf": amount_rwf,
                "customer_fee_rwf": 0.0, "total_to_pay_rwf": float(amount_rwf), "gateway": "LMBTECH"}
-        if self.is_sandbox(integrator):
+        if kitovu_test and not self.kitovu_test_available:
+            raise ChannelUnavailableError("Kitovu test is not set up - add KITOVUPAY_TEST_API_KEY / KITOVUPAY_TEST_API_SECRET")
+        if not kitovu_test and self.is_sandbox(integrator):
             return {**out, "account_name": "Test Customer", "verified": True, "gateway": sandbox.GATEWAY}
-        if not self.momo_via_kitovu:
+        if not kitovu_test and not self.momo_via_kitovu:
             return out  # LMBTech has no number lookup
+        kv = self._kitovu_for(kitovu_test)
         out["gateway"] = kitovu_client.GATEWAY
         try:
-            name = await self._kitovu.verify_number(phone)
+            name = await kv.verify_number(phone)
             out.update(account_name=name, verified=bool(name))
         except KitovuError as exc:
             logger.warning("kitovu_lookup_failed", extra={"error": exc.message})
         try:
-            quote = await self._kitovu.fee(Decimal(amount_rwf), phone, callback_url=self._kitovu_callback_url())
+            quote = await kv.fee(Decimal(amount_rwf), phone, callback_url=self._kitovu_callback_url())
             fee = float(quote.get("subscriber_charges") or 0)
             out.update(customer_fee_rwf=fee, total_to_pay_rwf=float(quote.get("total_subscriber_amount_to_pay") or amount_rwf + fee))
         except KitovuError as exc:
@@ -274,7 +288,12 @@ class PaymentService:
 
     # -- Collections ---------------------------------------------------------
 
-    async def create(self, body: PaymentCreate, integrator: Optional[dict]) -> dict:
+    async def create(
+        self, body: PaymentCreate, integrator: Optional[dict], *, sandbox_only: bool = False, kitovu_test: bool = False
+    ) -> dict:
+        """sandbox_only: the Test Lab - always simulated, whatever the account
+        or console mode, so a test never charges anyone. kitovu_test: admin
+        Kitovu test - a real request to Kitovu's TEST gateway (no real money)."""
         reference_id = body.reference_id or new_reference("SP")
         if await self._repo.get_by_reference(reference_id):
             raise DuplicateReferenceError(f"Reference {reference_id} was already used")
@@ -283,8 +302,11 @@ class PaymentService:
         channel = {"MTN_MOMO": "MTN", "AIRTEL_MONEY": "AIRTEL"}.get(body.channel, body.channel)
         amount = Decimal(body.amount_rwf)
         pricing = await self.pricing()
-        sandboxed = self.is_sandbox(integrator)
-        via_kitovu = not sandboxed and method == "MOMO" and self.momo_via_kitovu
+        if kitovu_test and (method != "MOMO" or not self.kitovu_test_available):
+            raise ChannelUnavailableError("Kitovu test is for MTN / Airtel only, and needs the Kitovu test keys")
+        sandboxed = not kitovu_test and (sandbox_only or self.is_sandbox(integrator))
+        via_kitovu = kitovu_test or (not sandboxed and method == "MOMO" and self.momo_via_kitovu)
+        kv = self._kitovu_for(kitovu_test)
         if channel == "AIRTEL" and not sandboxed and not via_kitovu:
             raise ChannelUnavailableError("Airtel Money is not available yet - use MTN MoMo or a card")
         # Each gateway's own cut: Kitovu for mobile money, LMBTech otherwise.
@@ -292,7 +314,7 @@ class PaymentService:
         money = compute_money(amount, self.fee_for(integrator, pricing), cost)
         external_id = await self._new_kitovu_external_id() if via_kitovu else None
         # Kitovu's UAT gateway moves no real money - record it as test money.
-        is_test = self.is_test_for(sandboxed) or (via_kitovu and self._kitovu.is_uat)
+        is_test = kitovu_test or self.is_test_for(sandboxed) or (via_kitovu and kv.is_uat)
 
         await self._repo.create(
             reference_id=reference_id,
@@ -315,11 +337,11 @@ class PaymentService:
         if via_kitovu:
             # Kitovu wants the wallet's registered name as the sender name.
             try:
-                payer_name = await self._kitovu.verify_number(body.customer_phone) or body.customer_name
+                payer_name = await kv.verify_number(body.customer_phone) or body.customer_name
             except KitovuError:
                 payer_name = body.customer_name
             try:
-                result = await self._kitovu.collect(
+                result = await kv.collect(
                     external_id=external_id,
                     amount=amount,
                     phone=body.customer_phone,
@@ -362,10 +384,13 @@ class PaymentService:
     # -- Disbursements -------------------------------------------------------
 
     async def create_disbursement(
-        self, body: DisbursementCreate, integrator: Optional[dict], *, is_cashout: bool = False
+        self, body: DisbursementCreate, integrator: Optional[dict], *, is_cashout: bool = False, kitovu_test: bool = False
     ) -> dict:
-        sandboxed = self.is_sandbox(integrator)
-        via_kitovu = not sandboxed and self.momo_via_kitovu
+        if kitovu_test and not self.kitovu_test_available:
+            raise ChannelUnavailableError("Kitovu test is not set up - add the Kitovu test keys")
+        sandboxed = not kitovu_test and self.is_sandbox(integrator)
+        via_kitovu = kitovu_test or (not sandboxed and self.momo_via_kitovu)
+        kv = self._kitovu_for(kitovu_test)
         airtel = kitovu_client.rail_for(body.recipient_phone) == "airtel"
         if airtel and not sandboxed and not via_kitovu:
             raise ChannelUnavailableError("Airtel payouts are not available yet - use an MTN number")
@@ -382,7 +407,7 @@ class PaymentService:
             else compute_money(amount, fee_pct, pricing.payout_cost_percentage)
         )
         external_id = await self._new_kitovu_external_id(payout=True) if via_kitovu else None
-        is_test = self.is_test_for(sandboxed) or (via_kitovu and self._kitovu.is_uat)
+        is_test = kitovu_test or self.is_test_for(sandboxed) or (via_kitovu and kv.is_uat)
 
         lock = self._payout_locks[integrator["id"]] if integrator else asyncio.Lock()
         async with lock:
@@ -419,7 +444,7 @@ class PaymentService:
 
         if via_kitovu:
             try:
-                result = await self._kitovu.payout(
+                result = await kv.payout(
                     external_id=external_id,
                     amount=amount,
                     phone=body.recipient_phone,
@@ -554,9 +579,11 @@ class PaymentService:
             return row
         try:
             if gateway == kitovu_client.GATEWAY:
-                if self._kitovu is None or not row.get("gateway_external_id"):
+                # Test rows were made on Kitovu's TEST gateway (when it is set up).
+                kv = self._kitovu_for(bool(row.get("is_test")) and self.kitovu_test_available)
+                if kv is None or not row.get("gateway_external_id"):
                     return row
-                result = await self._kitovu.get_status(row["gateway_external_id"])
+                result = await kv.get_status(row["gateway_external_id"])
             else:
                 result = await self._gateway.get_status(reference_id)
         except (LMBTechError, KitovuError) as exc:

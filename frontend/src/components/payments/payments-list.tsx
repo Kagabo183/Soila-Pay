@@ -11,6 +11,7 @@ import {
   type PaymentScope,
   type PaymentStatus,
   type PaymentSummary,
+  gatewayLabel,
 } from "@/services/payment.service";
 import { ChannelLogo, channelLabel } from "./payment-logos";
 import { BkPanel, StatusStamp, rwf } from "./brutal";
@@ -34,9 +35,12 @@ export function PaymentSummaryTiles({ summary, admin = false }: { summary: Payme
           fill: "bk-fill-green",
         },
         {
-          label: `LMBTech cost (${summary?.gatewayCostPercentage ?? 5}%)`,
+          label: "Gateway costs",
           value: summary ? rwf(summary.gatewayCostRwf ?? 0) : dash,
-          sub: "On every payment, incl. your own console sales",
+          sub:
+            summary?.momoGateway === "KITOVU"
+              ? `Cards: LMBTech ${summary?.gatewayCostPercentage ?? 5}% · MoMo: Kitovu`
+              : `LMBTech ${summary?.gatewayCostPercentage ?? 5}% on every payment`,
           fill: "bk-fill-orange",
         },
         {
@@ -48,7 +52,7 @@ export function PaymentSummaryTiles({ summary, admin = false }: { summary: Payme
         {
           label: "Your margin",
           value: summary ? rwf(margin) : dash,
-          sub: margin < 0 ? "Losing money on integrator payments - check Pricing" : "On integrator payments: fee − LMBTech cost",
+          sub: margin < 0 ? "Losing money on integrator payments - check Pricing" : "On integrator payments: fee − gateway cost",
           fill: margin < 0 ? "bk-fill-red" : "bk-fill-pink",
         },
       ]
@@ -189,7 +193,7 @@ export function PaymentsList({
                 {!compact && p.status === "SUCCESS" && (p.feeAmountRwf !== null || p.gatewayCostAmountRwf !== null) && (
                   <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] font-semibold">
                     {p.feeAmountRwf !== null && <span>Fee {rwf(p.feeAmountRwf)}{p.feePercentage !== null && ` (${p.feePercentage}%)`}</span>}
-                    {p.gatewayCostAmountRwf !== null && <span>LMBTech −{rwf(p.gatewayCostAmountRwf)}</span>}
+                    {p.gatewayCostAmountRwf !== null && <span>{gatewayLabel(p.gateway)} −{rwf(p.gatewayCostAmountRwf)}</span>}
                     {p.marginAmountRwf !== null && (
                       <span className={p.marginAmountRwf < 0 ? "text-destructive" : ""}>Margin {rwf(p.marginAmountRwf)}</span>
                     )}

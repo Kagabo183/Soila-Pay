@@ -127,6 +127,18 @@ class KitovuError(Exception):
         self.code = code
 
 
+def test_client(settings: Settings, live: "KitovuClient") -> "Optional[KitovuClient]":
+    """Client for Kitovu's TEST gateway (admin Kitovu test): the KITOVUPAY_TEST_*
+    keys, or the main client when that one already points at UAT."""
+    if settings.kitovupay_test_api_key and settings.kitovupay_test_api_secret:
+        return KitovuClient(settings.model_copy(update={
+            "kitovupay_base_url": settings.kitovupay_test_base_url,
+            "kitovupay_api_key": settings.kitovupay_test_api_key,
+            "kitovupay_api_secret": settings.kitovupay_test_api_secret,
+        }))
+    return live if live.configured and live.is_uat else None
+
+
 class KitovuClient:
     def __init__(self, settings: Settings):
         self._settings = settings

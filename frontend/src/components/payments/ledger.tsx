@@ -10,6 +10,7 @@ import {
   type Payment,
   type PaymentScope,
   type PaymentStatus,
+  gatewayLabel,
 } from "@/services/payment.service";
 import { ChannelLogo, channelLabel } from "./payment-logos";
 import { StatusStamp, rwf } from "./brutal";
@@ -200,8 +201,8 @@ export function Ledger({
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const first = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const last = Math.min(total, page * pageSize);
-  const headers = ["#", "Date", "Type", "Name", "Phone", "Amount", "Fee", "Net", ...(admin ? ["LMBTech", "Margin", "Integrator"] : []), "Status", "Action"];
-  const rightCols = new Set(["Amount", "Fee", "Net", "LMBTech", "Margin"]);
+  const headers = ["#", "Date", "Type", "Name", "Phone", "Amount", "Fee", "Net", ...(admin ? ["Gateway cost", "Margin", "Integrator"] : []), "Status", "Action"];
+  const rightCols = new Set(["Amount", "Fee", "Net", "Gateway cost", "Margin"]);
 
   return (
     <section className="bk-card min-w-0">
@@ -297,7 +298,7 @@ export function Ledger({
                           <div className="min-w-0">
                             <p className="truncate font-semibold">{r.customerName}</p>
                             {(r.reconciled || r.imported) && (
-                              <span className="bk-tag bk-fill-yellow" title={r.reconciled ? "Corrected after checking LMBTech" : "Added from LMBTech"}>
+                              <span className="bk-tag bk-fill-yellow" title={r.reconciled ? "Corrected after checking the gateway" : "Added from the gateway"}>
                                 {r.reconciled ? "Corrected" : "Imported"}
                               </span>
                             )}
@@ -310,7 +311,10 @@ export function Ledger({
                       <td className="whitespace-nowrap px-2 py-2.5 text-right font-bold">{rwf(netOf(r))}</td>
                       {admin && (
                         <>
-                          <td className="whitespace-nowrap px-2 py-2.5 text-right">{r.gatewayCostAmountRwf ? `−${rwf(r.gatewayCostAmountRwf)}` : "—"}</td>
+                          <td className="whitespace-nowrap px-2 py-2.5 text-right" title={gatewayLabel(r.gateway)}>
+                            {r.gatewayCostAmountRwf ? `−${rwf(r.gatewayCostAmountRwf)}` : "—"}
+                            <span className="bk-muted block text-[10px] font-semibold">{gatewayLabel(r.gateway)}</span>
+                          </td>
                           <td className={cn("whitespace-nowrap px-2 py-2.5 text-right font-semibold", (r.marginAmountRwf ?? 0) < 0 && "text-destructive")}>
                             {r.marginAmountRwf === null ? "—" : rwf(r.marginAmountRwf)}
                           </td>
@@ -445,9 +449,10 @@ function TransactionDetail({
     [p.direction === "COLLECTION" ? "Net to you" : "Taken from balance", <b key="n">{rwf(netOf(p))}</b>],
     ...(admin
       ? ([
-          ["LMBTech cost", p.gatewayCostAmountRwf ? `−${rwf(p.gatewayCostAmountRwf)}` : "—"],
+          ["Gateway", gatewayLabel(p.gateway)],
+          [`${gatewayLabel(p.gateway)} cost`, p.gatewayCostAmountRwf ? `−${rwf(p.gatewayCostAmountRwf)}` : "—"],
           ["Margin", p.marginAmountRwf === null ? "—" : rwf(p.marginAmountRwf)],
-          ["LMBTech reported", p.gatewayAmountRwf === null ? "—" : rwf(p.gatewayAmountRwf)],
+          [`${gatewayLabel(p.gateway)} reported`, p.gatewayAmountRwf === null ? "—" : rwf(p.gatewayAmountRwf)],
           ["Integrator", p.integratorName ?? "Console"],
         ] as [string, React.ReactNode][])
       : []),

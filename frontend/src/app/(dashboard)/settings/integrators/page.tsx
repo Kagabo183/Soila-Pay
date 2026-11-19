@@ -279,7 +279,7 @@ export default function IntegratorsPage() {
     { key: "totalCollectedRwf", header: "Collected", align: "right", render: (r) => formatRwf(r.totalCollectedRwf) },
     { key: "totalDisbursedRwf", header: "Paid out", align: "right", render: (r) => formatRwf(r.totalDisbursedRwf) },
     { key: "totalFeeChargedRwf", header: "Fees charged", align: "right", render: (r) => formatRwf(r.totalFeeChargedRwf) },
-    { key: "totalGatewayCostRwf", header: "LMBTech cost", align: "right", render: (r) => `−${formatRwf(r.totalGatewayCostRwf)}` },
+    { key: "totalGatewayCostRwf", header: "Gateway cost", align: "right", render: (r) => `−${formatRwf(r.totalGatewayCostRwf)}` },
     {
       key: "totalMarginRwf",
       header: "Our margin",
@@ -299,7 +299,7 @@ export default function IntegratorsPage() {
           <Breadcrumb items={[{ label: "Console" }, { label: "Integrators & Pricing" }]} />
           <h1 className="mt-1 text-xl font-semibold text-foreground">Integrators & Pricing</h1>
           <p className="text-sm text-muted-foreground">
-            The businesses selling with Soila Pay, what each one pays you on collections and payouts, and the margin left after LMBTech&apos;s cut.
+            The businesses selling with Soila Pay, what each one pays you on collections and payouts, and the margin left after the gateways&apos; cut.
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             Integrators can also sign themselves up at{" "}

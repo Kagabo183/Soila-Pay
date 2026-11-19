@@ -140,7 +140,12 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
       ? { label: "Paid out", value: summary ? rwf(summary.disbursedRwf) : "—", sub: summary ? `${summary.successCount} payouts` : "", fill: "bk-fill-blue" }
       : { label: "Available balance", value: balance === null ? "—" : rwf(balance), sub: "What you can pay out now", fill: "bk-fill-green" },
     admin
-      ? { label: `LMBTech cost (${summary?.payoutCostPercentage ?? 5}%)`, value: summary ? `${summary.payoutCostPercentage ?? 5}%` : "—", sub: "Of every payout", fill: "bk-fill-orange" }
+      ? {
+          label: "Gateway cost",
+          value: summary ? rwf(summary.gatewayCostRwf ?? 0) : "—",
+          sub: summary?.momoGateway === "KITOVU" ? "Kitovu: flat fee per payout" : `LMBTech: ${summary?.payoutCostPercentage ?? 5}% of every payout`,
+          fill: "bk-fill-orange",
+        }
       : { label: "Paid out", value: summary ? rwf(summary.disbursedRwf) : "—", sub: summary ? `${summary.successCount} payouts` : "", fill: "bk-fill-blue" },
     admin
       ? { label: "Waiting / failed", value: summary ? `${summary.pendingCount} / ${summary.failedCount}` : "—", sub: summary ? `of ${summary.totalCount} payouts` : "", fill: "bk-fill-pink" }
@@ -155,7 +160,9 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
             <h1 className="bk-display text-3xl font-bold uppercase sm:text-4xl">Disbursements</h1>
             <p className="bk-muted mt-1 max-w-xl text-sm">
               Send money to any {summary?.airtelAvailable ? "MTN or Airtel" : "MTN"} Mobile Money number.{" "}
-              {admin ? "Payouts come from Soila Pay's LMBTech balance." : "Payouts come from your available balance."}
+              {admin
+                ? `Payouts come from Soila Pay's ${summary?.momoGateway === "KITOVU" ? "Kitovu" : "LMBTech"} balance.`
+                : "Payouts come from your available balance."}
             </p>
           </div>
           {summary && (

@@ -76,7 +76,7 @@ export function PaymentsPage({
 
         {admin && !!summary?.integratorsBelowCost && pricingHref && (
           <Link href={pricingHref} className="bk-card bk-fill-red block p-4 text-sm font-semibold">
-            ⚠ {summary.integratorsBelowCost} integrator{summary.integratorsBelowCost > 1 ? "s are" : " is"} priced below the LMBTech cost and will lose money on every transaction. Fix pricing →
+            ⚠ {summary.integratorsBelowCost} integrator{summary.integratorsBelowCost > 1 ? "s are" : " is"} priced below the gateway cost and will lose money on every transaction. Fix pricing →
           </Link>
         )}
 
@@ -104,7 +104,7 @@ export function PaymentsPage({
           </div>
         )}
 
-        {tab === "lab" && <TestLab scope={scope} integratorKey={integratorKey} testMode={testMode} onRan={bump} />}
+        {tab === "lab" && <TestLab scope={scope} integratorKey={integratorKey} testMode={testMode} kitovuTest={admin && !!summary?.kitovuTestAvailable} onRan={bump} />}
       </div>
     </div>
   );

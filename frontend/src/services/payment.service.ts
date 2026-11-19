@@ -35,6 +35,8 @@ export interface Payment {
   customerEmail: string;
   customerPhone: string | null;
   description: string;
+  /** Who moved the money: LMBTECH (cards), KITOVU (mobile money), SANDBOX, MANUAL. */
+  gateway: string;
   gatewayTransactionId: string | null;
   redirectUrl: string | null;
   isTest: boolean;
@@ -72,6 +74,8 @@ export interface PaymentSummary {
   payoutsConfigured: boolean;
   /** Airtel Money can be offered (Kitovu Pay is on, or sandbox). */
   airtelAvailable: boolean;
+  /** Admin: Kitovu's TEST gateway is set up (Test Lab "Kitovu test"). */
+  kitovuTestAvailable: boolean;
   /** Who handles MoMo collections: KITOVU or LMBTECH. */
   momoGateway: string;
   /** The ledger these numbers come from (the Live/Test money switch). */
@@ -211,6 +215,7 @@ function fromApi(row: any): Payment {
     customerEmail: row.customer_email,
     customerPhone: row.customer_phone,
     description: row.description,
+    gateway: row.gateway ?? "",
     gatewayTransactionId: row.gateway_transaction_id,
     redirectUrl: row.redirect_url,
     isTest: row.is_test,
@@ -389,6 +394,7 @@ export const paymentService = {
       gatewayConfigured: data.gateway_configured,
       payoutsConfigured: data.payouts_configured,
       airtelAvailable: !!data.airtel_available,
+      kitovuTestAvailable: !!data.kitovu_test_available,
       momoGateway: data.momo_gateway ?? "LMBTECH",
       testMode: data.test_mode,
       accountTestMode: data.account_test_mode ?? data.test_mode,
@@ -569,12 +575,42 @@ async function rawCall(fn: () => Promise<{ status: number; data: unknown }>): Pr
 /** Test Lab helpers: same endpoints, but hand back the raw HTTP status + JSON
  * (including validation errors) instead of throwing, so the lab can show
  * exactly what an integrator would see. */
+/** Test Lab: every payment is created with ?sandbox=true, so it is simulated
+ * by Soila Pay and never charges anyone - even from the live admin console. */
 export const paymentLab = {
   create: (scope: PaymentScope, body: Record<string, unknown>) =>
-    rawCall(() => apiClient.post(base(scope), body, { headers: headers(scope), timeout: 45000 })),
+    rawCall(() => apiClient.post(base(scope), body, { headers: headers(scope), params: { sandbox: true }, timeout: 45000 })),
   get: (scope: PaymentScope, referenceId: string) =>
     rawCall(() => apiClient.get(`${base(scope)}/${encodeURIComponent(referenceId)}`, { headers: headers(scope) })),
+  /** Admin Kitovu test: real requests to Kitovu's TEST gateway (test money). */
+  kitovuLookup: (body: Record<string, unknown>) =>
+    rawCall(() => apiClient.post("/api/v1/admin/payments/momo-lookup", body, { params: { kitovu_test: true }, timeout: 45000 })),
+  kitovuCollect: (body: Record<string, unknown>) =>
+    rawCall(() => apiClient.post("/api/v1/admin/payments", body, { params: { kitovu_test: true }, timeout: 45000 })),
+  kitovuPayout: (body: Record<string, unknown>) =>
+    rawCall(() => apiClient.post("/api/v1/admin/disbursements", body, { params: { kitovu_test: true }, timeout: 45000 })),
+  /** Plays the customer on the sandbox card page (approve with a test card). */
+  cardPage: (referenceId: string, cardNumber: string) =>
+    rawCall(() =>
+      apiClient.post(`/api/v1/payments/sandbox/${encodeURIComponent(referenceId)}/complete`, { approve: true, card_number: cardNumber })
+    ),
 };
+
+/** Display name of the gateway that handled a transaction (admin views). */
+export function gatewayLabel(gateway: string | null | undefined): string {
+  switch ((gateway ?? "").toUpperCase()) {
+    case "KITOVU":
+      return "Kitovu";
+    case "LMBTECH":
+      return "LMBTech";
+    case "SANDBOX":
+      return "Sandbox";
+    case "MANUAL":
+      return "Manual";
+    default:
+      return "Gateway";
+  }
+}
 
 /** Pull the human-readable reason out of an API error (FastAPI 422 lists too). */
 export function paymentErrorMessage(error: unknown): string {

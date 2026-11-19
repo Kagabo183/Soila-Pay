@@ -10,7 +10,8 @@ import pytest
 import respx
 
 from app.config import Settings
-from app.schemas.payment import PaymentCreate
+from app.schemas.payment import DisbursementCreate, PaymentCreate
+from app.services.payment_service import ChannelUnavailableError
 from app.services import kitovu_client
 from app.services.kitovu_client import KitovuClient, KitovuError
 
@@ -269,3 +270,67 @@ async def test_service_payout_via_kitovu_uses_flat_cost():
     assert m.gateway_cost_amount_rwf == Decimal("400.00") and m.gateway_cost_percentage == Decimal("2.00")
     assert m.fee_amount_rwf == Decimal("1200.00") and m.margin_amount_rwf == Decimal("800.00")  # 6% - flat 400
     assert svc._kitovu.sent[0]["external_id"] == row["gateway_external_id"]
+
+
+async def test_kitovu_test_goes_to_the_test_gateway_as_test_money_and_live_is_untouched():
+    """Admin "Kitovu test": the TEST client is used, the row is test money,
+    sync asks the TEST client; normal live MoMo never touches it."""
+    from tests.test_sandbox import FakeRepo, _svc
+    from app.services.lmbtech_client import GatewayResult
+
+    repo = FakeRepo()
+
+    async def external_id_taken(gateway, ext):
+        return False
+
+    repo.external_id_taken = external_id_taken
+
+    class Fake:
+        configured = True
+
+        def __init__(self, uat):
+            self.is_uat, self.calls = uat, []
+
+        async def verify_number(self, phone):
+            self.calls.append("verify")
+            return "TEST NAME"
+
+        async def collect(self, **kw):
+            self.calls.append("collect")
+            return GatewayResult(status="PENDING", message="sent", transaction_id="T1")
+
+        async def payout(self, **kw):
+            self.calls.append("payout")
+            return GatewayResult(status="PENDING", message="sent", transaction_id="T2")
+
+        async def get_status(self, ext):
+            self.calls.append("status")
+            return GatewayResult(status="SUCCESS", message="ok", transaction_id="T1")
+
+    svc = _svc(repo)
+    svc._settings = _settings(momo_gateway="lmbtech")  # live MoMo still on LMBTech
+    live, test = Fake(uat=False), Fake(uat=True)
+    svc._kitovu, svc._kitovu_test = live, test
+
+    async def apply(ref, result):
+        repo.rows[ref].update(status=result.status)
+        return repo.rows[ref]
+
+    svc._apply = apply
+    row = await svc.create(PaymentCreate(channel="MTN_MOMO", amount_rwf=100, customer_name="A B", customer_email="a@example.com",
+                                         customer_phone="0788123456"), None, kitovu_test=True)
+    assert row["gateway"] == "KITOVU" and row["is_test"] is True and len(row["gateway_external_id"]) == 6
+    assert test.calls == ["verify", "collect"] and live.calls == []
+    synced = await svc.sync(row["reference_id"])
+    assert test.calls[-1] == "status" and live.calls == [] and synced["status"] == "SUCCESS"
+
+    po = await svc.create_disbursement(DisbursementCreate(amount_rwf=100, recipient_name="Aline", recipient_phone="0788123456"),
+                                       None, kitovu_test=True)
+    assert po["is_test"] is True and "payout" in test.calls and live.calls == []
+
+    with pytest.raises(ChannelUnavailableError):  # cards are never sent to Kitovu
+        await svc.create(PaymentCreate(channel="VISA", amount_rwf=100, customer_name="A B", customer_email="a@example.com"),
+                         None, kitovu_test=True)
+    svc._kitovu_test = None
+    with pytest.raises(ChannelUnavailableError):  # not set up -> clear refusal
+        await svc.momo_lookup("0788123456", 100, None, kitovu_test=True)

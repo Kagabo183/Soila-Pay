@@ -11,6 +11,7 @@ import {
   type Payment,
   type PaymentChannel,
   type PaymentScope,
+  gatewayLabel,
 } from "@/services/payment.service";
 import { AirtelMoneyLogo, MastercardLogo, MtnMomoLogo, OtherCardLogo, VisaLogo, channelFill, channelLabel } from "./payment-logos";
 import { BkField, rwf } from "./brutal";
@@ -496,7 +497,7 @@ function Receipt({ payment, onAgain, onRetry }: { payment: Payment; onAgain: () 
           <Row label={`Fee${payment.feePercentage !== null ? ` (${payment.feePercentage}%)` : ""}`} value={rwf(payment.feeAmountRwf)} />
         )}
         {ok && payment.gatewayCostAmountRwf !== null && (
-          <Row label={`LMBTech (${payment.gatewayCostPercentage}%)`} value={`−${rwf(payment.gatewayCostAmountRwf)}`} />
+          <Row label={`${gatewayLabel(payment.gateway)} cost (${payment.gatewayCostPercentage}%)`} value={`−${rwf(payment.gatewayCostAmountRwf)}`} />
         )}
         <Row label="Customer" value={payment.customerName} />
         {payment.description && payment.description !== "payment" && <Row label="For" value={payment.description} />}

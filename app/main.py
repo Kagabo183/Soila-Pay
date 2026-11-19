@@ -20,6 +20,7 @@ from app.db.payment_repo import PaymentRepo
 from app.logging_conf import configure_logging
 from app.services.fineract_client import FineractClient
 from app.services.kitovu_client import KitovuClient
+from app.services.kitovu_client import test_client as kitovu_test_client
 from app.services.lmbtech_client import LMBTechClient
 from app.services.payment_service import PaymentService
 
@@ -65,6 +66,7 @@ async def lifespan(app: FastAPI):
     integrator_webhook_repo = IntegratorWebhookRepo(pool)
     lmbtech_client = LMBTechClient(settings)
     kitovu = KitovuClient(settings)
+    kitovu_test = kitovu_test_client(settings, kitovu)
 
     app.state.settings = settings
     app.state.db_pool = pool
@@ -80,6 +82,7 @@ async def lifespan(app: FastAPI):
         webhook_repo=integrator_webhook_repo,
         integrator_repo=integrator_repo,
         kitovu=kitovu,
+        kitovu_test=kitovu_test,
     )
     app.state.kitovu_client = kitovu
     if settings.momo_gateway == "kitovu":
@@ -132,6 +135,8 @@ async def lifespan(app: FastAPI):
                 await payment_task
         await lmbtech_client.aclose()
         await kitovu.aclose()
+        if kitovu_test is not None and kitovu_test is not kitovu:
+            await kitovu_test.aclose()
         await fineract_client.aclose()
         await close_pool(pool)
         logger.info("shutdown_complete")

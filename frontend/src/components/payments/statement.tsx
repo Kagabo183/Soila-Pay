@@ -344,7 +344,7 @@ function CashoutDialog({
                 {momo && <div className="flex justify-between px-3 py-2"><dt className="font-bold uppercase text-xs">Fee ({fee ?? "—"}%)</dt><dd>{rwf(feeAmount)}</dd></div>}
                 <div className="flex justify-between px-3 py-2"><dt className="font-bold uppercase text-xs">Taken from balance</dt><dd className="font-bold">{rwf(total)}</dd></div>
               </dl>
-              <p className="bk-muted text-xs">{momo ? "Sent instantly through LMBTech to your MTN number." : "Soila Pay sends the bank transfer, usually within 1 business day."}</p>
+              <p className="bk-muted text-xs">{momo ? "Sent instantly to your mobile money number." : "Soila Pay sends the bank transfer, usually within 1 business day."}</p>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setStep("form")} disabled={step === "sending"} className="bk-btn bk-fill-paper">
                   Edit

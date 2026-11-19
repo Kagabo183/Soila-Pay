@@ -303,3 +303,16 @@ async def test_import_lmbtech_dashboard_cashout():
 
     row2 = await svc.import_from_gateway("LMB-CASHOUT-2", 500, "MTN", "", direction="CASHOUT")
     assert row2["gateway"] == "LMBTECH" and row2["method"] == "MOMO" and row2["customer_name"] == "Soila Pay"
+
+
+def test_test_lab_is_always_simulated_even_from_live_console_and_live_accounts():
+    """The Test Lab passes sandbox_only: admin console (normally live) and a
+    live integrator must both get a simulated payment - never LMBTech/Kitovu."""
+    repo = FakeRepo()
+    svc = _svc(repo)
+    live_portal = {**TEST_PORTAL, "account_mode": "PRODUCTION"}
+    for who in (None, live_portal):
+        for channel, phone in (("MTN_MOMO", "0788123456"), ("AIRTEL_MONEY", "0731234567"), ("VISA", None)):
+            body = PaymentCreate(channel=channel, amount_rwf=100, customer_name="Lab", customer_email="lab@example.com", customer_phone=phone)
+            row = asyncio.run(svc.create(body, who, sandbox_only=True))
+            assert row["gateway"] == sandbox.GATEWAY and row["is_test"] is True
