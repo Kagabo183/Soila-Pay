@@ -9,11 +9,13 @@ import logging
 
 import httpx
 
+from app.timefmt import iso
+
 logger = logging.getLogger(__name__)
 
 
 def _iso(value):
-    return value.isoformat() if value else None
+    return iso(value)
 
 
 def _build_payment_payload(event: str, row: dict) -> dict:

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Reque
 from fastapi.responses import Response
 from pydantic import BaseModel, HttpUrl
 
+from app.timefmt import iso
 from app.config import settings
 from app.schemas.integrator import (
     DocumentType,
@@ -344,7 +345,7 @@ def _webhook_out(row: dict, full_secret: str | None = None) -> dict:
         "events": row["events"],
         "secret_hint": hint,
         "is_active": bool(row["is_active"]),
-        "created_at": row["created_at"].isoformat(),
+        "created_at": iso(row["created_at"]),
     }
     if full_secret is not None:
         base["secret"] = full_secret

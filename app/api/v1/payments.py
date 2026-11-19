@@ -29,6 +29,7 @@ from app.api.v1.deps import require_admin
 from app.api.v1.integrator_portal import _current_integrator
 from app.db import payment_repo as payment_repo_module
 from app.services import kitovu_client, origin
+from app.timefmt import iso
 from app.schemas.payment import (
     CashoutRequest,
     DisbursementCreate,
@@ -80,7 +81,7 @@ def _num(value) -> Optional[float]:
 
 
 def _iso(value) -> Optional[str]:
-    return value.isoformat() if value else None
+    return iso(value)
 
 
 def payment_out(row: dict, *, admin: bool = False) -> PaymentOut:
@@ -851,8 +852,8 @@ def _num_dict(row: dict) -> dict:
     for k, v in row.items():
         if isinstance(v, Decimal):
             out[k] = float(v)
-        elif isinstance(v, (date,)) or hasattr(v, "isoformat"):
-            out[k] = v.isoformat()
+        elif isinstance(v, date):
+            out[k] = iso(v)
         else:
             out[k] = v
     return out
