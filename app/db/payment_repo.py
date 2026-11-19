@@ -124,6 +124,17 @@ class PaymentRepo:
                 )
                 return await cur.fetchone()
 
+    async def get_by_gateway_transaction_id(self, gateway: str, transaction_id: str) -> Optional[dict]:
+        """A payment by the gateway's own transaction id (Kitovu's transactionId)."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT reference_id FROM payments WHERE gateway = %s AND gateway_transaction_id = %s ORDER BY id DESC LIMIT 1",
+                    (gateway, transaction_id),
+                )
+                row = await cur.fetchone()
+        return await self.get_by_reference(row["reference_id"]) if row else None
+
     async def get_by_external_id(self, gateway: str, external_id: str) -> Optional[dict]:
         """A payment by the id a gateway knows it by (Kitovu's externalId)."""
         async with self._pool.acquire() as conn:

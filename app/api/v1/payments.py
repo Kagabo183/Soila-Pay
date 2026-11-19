@@ -485,22 +485,56 @@ async def kitovu_callback(request: Request):
     """Kitovu Pay posts {"externalId", "status", ...} when a MoMo payment
     finishes. The body is NOT signed, so it is only used to find the row; the
     real status comes from Kitovu's authenticated status API (sync) - a forged
-    callback can't mark anything paid. Always 200 so Kitovu stops retrying."""
+    callback can't mark anything paid. Always 200 so Kitovu stops retrying.
+
+    The id is read wherever Kitovu puts it (top level or under "data",
+    camelCase or snake_case, JSON or form), falling back to Kitovu's own
+    transactionId."""
+    raw = await request.body()
+    data: dict = {}
     try:
-        data = json.loads(await request.body() or b"{}")
+        parsed = json.loads(raw or b"{}")
+        data = parsed if isinstance(parsed, dict) else {}
     except ValueError:
-        data = {}
-    external_id = str(data.get("externalId") or "").strip() if isinstance(data, dict) else ""
+        try:
+            data = dict(await request.form())
+        except Exception:
+            data = {}
+    nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+
+    def pick(*names: str) -> str:
+        for src in (data, nested, request.query_params):
+            for n in names:
+                v = src.get(n)
+                if v not in (None, ""):
+                    return str(v).strip()
+        return ""
+
+    external_id = pick("externalId", "external_id", "externalID", "external_reference", "reference")
+    transaction_id = pick("transactionId", "transaction_id", "reference_id", "referenceId")
+    repo = request.app.state.payment_repo
     row = None
     if external_id:
-        row = await request.app.state.payment_repo.get_by_external_id(kitovu_client.GATEWAY, external_id)
-        if row is not None:
-            row = await _service(request).sync(row["reference_id"])
-    logger.info("kitovu_callback", extra={"external_id": external_id, "found": row is not None})
+        row = await repo.get_by_external_id(kitovu_client.GATEWAY, external_id)
+    if row is None and transaction_id:
+        row = await repo.get_by_gateway_transaction_id(kitovu_client.GATEWAY, transaction_id)
+    if row is not None:
+        row = await _service(request).sync(row["reference_id"])
+    logger.info(
+        "kitovu_callback",
+        extra={
+            "external_id": external_id,
+            "transaction_id": transaction_id,
+            "found": row is not None,
+            # Field names only (no values) - to learn Kitovu's real payload shape.
+            "keys": sorted(data.keys())[:20],
+            "data_keys": sorted(nested.keys())[:20],
+        },
+    )
     return {
         "success": True,
         "message": "Webhook received and processed" if row else "Unknown externalId",
-        "transactionId": data.get("transactionId") if isinstance(data, dict) else None,
+        "transactionId": transaction_id or None,
     }
 
 
