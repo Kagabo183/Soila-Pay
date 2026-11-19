@@ -73,6 +73,9 @@ export interface PaymentSummary {
   feesRwf: number;
   momoRwf: number;
   cardRwf: number;
+  /** Successful cash-outs (included in disbursedRwf / successCount). */
+  cashoutRwf: number;
+  cashoutCount: number;
   successCount: number;
   pendingCount: number;
   failedCount: number;
@@ -417,6 +420,8 @@ export const paymentService = {
       feesRwf: data.fees_rwf,
       momoRwf: data.momo_rwf,
       cardRwf: data.card_rwf,
+      cashoutRwf: data.cashout_rwf ?? 0,
+      cashoutCount: data.cashout_count ?? 0,
       successCount: data.success_count,
       pendingCount: data.pending_count,
       failedCount: data.failed_count,

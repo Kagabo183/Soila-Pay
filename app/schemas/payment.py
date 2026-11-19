@@ -175,6 +175,9 @@ class PaymentSummary(BaseModel):
     fees_rwf: float
     momo_rwf: float
     card_rwf: float
+    # Successful cash-outs (part of disbursed_rwf / success_count).
+    cashout_rwf: float = 0
+    cashout_count: int = 0
     # Counts follow the `direction` the summary was asked for.
     success_count: int
     pending_count: int

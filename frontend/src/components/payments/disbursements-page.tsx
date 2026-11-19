@@ -27,6 +27,14 @@ import { PaymentsList } from "./payments-list";
 import { MomoNameHint, useMomoName } from "./momo-name";
 
 const MIN = 100;
+
+/** "2 payouts · incl. 1 cash-out (1,500 RWF)" */
+function paidOutSub(s: PaymentSummary): string {
+  const n = s.successCount;
+  const base = `${n} ${n === 1 ? "payout" : "payouts"}`;
+  if (!s.cashoutCount) return base;
+  return `${base} · incl. ${s.cashoutCount} ${s.cashoutCount === 1 ? "cash-out" : "cash-outs"} (${rwf(s.cashoutRwf)})`;
+}
 const QUICK = [1000, 5000, 10000, 50000];
 
 type Step = "form" | "confirm" | "sending" | "done";
@@ -141,7 +149,7 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
 
   const tiles = [
     admin
-      ? { label: "Paid out", value: summary ? rwf(summary.disbursedRwf) : "—", sub: summary ? `${summary.successCount} payouts` : "", fill: "bk-fill-blue" }
+      ? { label: "Paid out", value: summary ? rwf(summary.disbursedRwf) : "—", sub: summary ? paidOutSub(summary) : "", fill: "bk-fill-blue" }
       : { label: "Available balance", value: balance === null ? "—" : rwf(balance), sub: "What you can pay out now", fill: "bk-fill-green" },
     admin
       ? {
@@ -150,9 +158,9 @@ export function DisbursementsPage({ scope }: { scope: PaymentScope }) {
           sub: summary?.momoGateway === "KITOVU" ? "Kitovu: flat fee per payout" : `LMBTech: ${summary?.payoutCostPercentage ?? 5}% of every payout`,
           fill: "bk-fill-orange",
         }
-      : { label: "Paid out", value: summary ? rwf(summary.disbursedRwf) : "—", sub: summary ? `${summary.successCount} payouts` : "", fill: "bk-fill-blue" },
+      : { label: "Paid out", value: summary ? rwf(summary.disbursedRwf) : "—", sub: summary ? paidOutSub(summary) : "", fill: "bk-fill-blue" },
     admin
-      ? { label: "Waiting / failed", value: summary ? `${summary.pendingCount} / ${summary.failedCount}` : "—", sub: summary ? `of ${summary.totalCount} payouts` : "", fill: "bk-fill-pink" }
+      ? { label: "Waiting / failed", value: summary ? `${summary.pendingCount} / ${summary.failedCount}` : "—", sub: summary ? `of ${summary.totalCount} ${summary.totalCount === 1 ? "payout" : "payouts"}` : "", fill: "bk-fill-pink" }
       : { label: "Payout fee", value: summary ? `${summary.payoutFeePercentage ?? "—"}%` : "—", sub: "Added to each payout", fill: "bk-fill-pink" },
   ];
 

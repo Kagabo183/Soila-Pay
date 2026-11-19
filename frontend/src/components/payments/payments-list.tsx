@@ -170,7 +170,7 @@ export function PaymentsList({
         <div className="bk-box border-dashed p-8 text-center">
           <p className="bk-display text-lg font-bold">{payouts ? "No payouts yet" : "No payments yet"}</p>
           <p className="bk-muted mt-1 text-sm">
-            {payouts ? "Send one with the form." : "Take one, or press “Run all” in the Test Lab."}
+            {payouts ? "Send one with the form." : "Take one, or try the Test Lab."}
           </p>
         </div>
       ) : (
@@ -180,6 +180,7 @@ export function PaymentsList({
               {!compact && <ChannelLogo channel={p.channel} className="hidden sm:inline-flex" />}
               <div className="min-w-0 flex-1">
                 <p className="truncate font-bold">
+                  {p.isCashout && <span className="bk-tag bk-fill-pink mr-1.5 align-middle text-[10px]">Cash-out</span>}
                   {p.customerName}
                   {!compact && p.description && p.description !== "payment" && (
                     <span className="bk-muted font-normal"> · {p.description}</span>

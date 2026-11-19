@@ -332,10 +332,11 @@ class PaymentRepo:
 
     async def summary(self, integrator_id: Optional[int] = None, direction: Optional[str] = None, *, is_test: Optional[bool] = None) -> dict:
         """Totals for one integrator (or everyone). Money sums count SUCCESS
-        only; the counts follow `direction` if given."""
+        only. Counts, fees, gateway cost and margin follow `direction` if
+        given - so the payouts page never shows the collections' costs."""
         clause, args = _where(integrator_id=integrator_id, is_test=is_test)
         dir_filter = "AND p.direction = %s" if direction else ""
-        count_args = [direction] * 4 if direction else []
+        count_args = [direction] * 7 if direction else []
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
@@ -345,9 +346,11 @@ class PaymentRepo:
                       COALESCE(SUM(CASE WHEN p.status='SUCCESS' AND p.direction='DISBURSEMENT' THEN p.amount_rwf END), 0) AS disbursed_rwf,
                       COALESCE(SUM(CASE WHEN p.status='SUCCESS' AND p.direction='COLLECTION' AND p.method='MOMO' THEN p.amount_rwf END), 0) AS momo_rwf,
                       COALESCE(SUM(CASE WHEN p.status='SUCCESS' AND p.direction='COLLECTION' AND p.method='CARD' THEN p.amount_rwf END), 0) AS card_rwf,
-                      COALESCE(SUM(CASE WHEN p.status='SUCCESS' THEN p.fee_amount_rwf END), 0) AS fees_rwf,
-                      COALESCE(SUM(CASE WHEN p.status='SUCCESS' THEN p.gateway_cost_amount_rwf END), 0) AS gateway_cost_rwf,
-                      COALESCE(SUM(CASE WHEN p.status='SUCCESS' THEN p.margin_amount_rwf END), 0) AS margin_rwf,
+                      COALESCE(SUM(CASE WHEN p.status='SUCCESS' {dir_filter} THEN p.fee_amount_rwf END), 0) AS fees_rwf,
+                      COALESCE(SUM(CASE WHEN p.status='SUCCESS' {dir_filter} THEN p.gateway_cost_amount_rwf END), 0) AS gateway_cost_rwf,
+                      COALESCE(SUM(CASE WHEN p.status='SUCCESS' {dir_filter} THEN p.margin_amount_rwf END), 0) AS margin_rwf,
+                      COALESCE(SUM(CASE WHEN p.status='SUCCESS' AND p.direction='DISBURSEMENT' AND p.is_cashout=1 THEN p.amount_rwf END), 0) AS cashout_rwf,
+                      COALESCE(SUM(p.status='SUCCESS' AND p.direction='DISBURSEMENT' AND p.is_cashout=1), 0) AS cashout_count,
                       COALESCE(SUM(CASE WHEN p.status='SUCCESS' {dir_filter} THEN 1 END), 0) AS success_count,
                       COALESCE(SUM(CASE WHEN p.status='PENDING' {dir_filter} THEN 1 END), 0) AS pending_count,
                       COALESCE(SUM(CASE WHEN p.status IN ('FAILED','CANCELLED') {dir_filter} THEN 1 END), 0) AS failed_count,

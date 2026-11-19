@@ -268,6 +268,8 @@ async def _summary(
         fees_rwf=float(row["fees_rwf"]),
         momo_rwf=float(row["momo_rwf"]),
         card_rwf=float(row["card_rwf"]),
+        cashout_rwf=float(row["cashout_rwf"]),
+        cashout_count=int(row["cashout_count"]),
         success_count=int(row["success_count"]),
         pending_count=int(row["pending_count"]),
         failed_count=int(row["failed_count"]),
