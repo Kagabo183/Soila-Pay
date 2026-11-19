@@ -581,12 +581,17 @@ async def reconciliation(pool, *, date_from: Optional[date], date_to: Optional[d
         async with conn.cursor(aiomysql.DictCursor) as cur:
             out["totals"] = (await _rows(cur, f"SELECT {_RECON_COLUMNS} {base}", args))[0]
             for key, (labels, group, order) in _BREAKDOWNS.items():
-                out[key] = await _rows(cur, f"SELECT {labels}, {_RECON_COLUMNS} {base} GROUP BY {group} ORDER BY {order}", args)
+                # Sorted in an outer query: MariaDB (production) can't ORDER BY
+                # an expression over aggregate aliases.
+                out[key] = await _rows(
+                    cur, f"SELECT * FROM (SELECT {labels}, {_RECON_COLUMNS} {base} GROUP BY {group}) t ORDER BY {order}", args
+                )
 
             # What each integrator can still withdraw NOW (all time, this ledger) -
             # the same formula as integrator_balance - and what is reserved by
             # pending payouts / bank cash-outs.
             out["balances"] = await _rows(cur, """
+                SELECT * FROM (
                 SELECT i.id AS integrator_id, i.name AS integrator_name, i.account_mode,
                   COALESCE(SUM(CASE WHEN p.direction='COLLECTION' AND p.status='SUCCESS'
                                     THEN p.amount_rwf - COALESCE(p.fee_amount_rwf, 0) END), 0) AS earned_net,
@@ -598,7 +603,8 @@ async def reconciliation(pool, *, date_from: Optional[date], date_to: Optional[d
                 FROM integrators i
                 LEFT JOIN payments p ON p.integrator_id = i.id AND p.is_test = %s
                 GROUP BY i.id, i.name, i.account_mode
-                HAVING earned_net > 0 OR spent > 0 OR reserved > 0
+                ) b
+                WHERE earned_net > 0 OR spent > 0 OR reserved > 0
                 ORDER BY earned_net - spent - reserved DESC
                 """, (int(is_test),))
 
