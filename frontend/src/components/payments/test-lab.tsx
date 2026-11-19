@@ -1,12 +1,26 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronDown, Copy, Loader2, Play, PlayCircle, Search, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Loader2,
+  Play,
+  PlayCircle,
+  Search,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/store/settings-store";
 import { toast } from "@/store/toast-store";
-import { paymentLab, type PaymentScope, type RawCall } from "@/services/payment.service";
+import {
+  paymentLab,
+  type PaymentScope,
+  type RawCall,
+} from "@/services/payment.service";
 import { ChannelLogo, channelFill } from "./payment-logos";
+import { CheckoutPanel } from "./checkout-panel";
 import { BkPanel, StatusStamp } from "./brutal";
 
 /** Test numbers and cards understood by Soila Pay's simulator (app/services/sandbox.py). */
@@ -33,7 +47,10 @@ interface Scenario {
   body: Record<string, unknown>;
 }
 
-const customer = { customer_name: "Test Customer", customer_email: "customer@example.com" };
+const customer = {
+  customer_name: "Test Customer",
+  customer_email: "customer@example.com",
+};
 
 const GO_THROUGH: Scenario[] = [
   {
@@ -44,7 +61,12 @@ const GO_THROUGH: Scenario[] = [
     kind: "card",
     want: "SUCCESS",
     card: GOOD_CARD,
-    body: { channel: "VISA", amount_rwf: 100, ...customer, description: "Lab Visa" },
+    body: {
+      channel: "VISA",
+      amount_rwf: 100,
+      ...customer,
+      description: "Lab Visa",
+    },
   },
   {
     id: "mastercard",
@@ -54,7 +76,12 @@ const GO_THROUGH: Scenario[] = [
     kind: "card",
     want: "SUCCESS",
     card: GOOD_MASTERCARD,
-    body: { channel: "MASTERCARD", amount_rwf: 100, ...customer, description: "Lab Mastercard" },
+    body: {
+      channel: "MASTERCARD",
+      amount_rwf: 100,
+      ...customer,
+      description: "Lab Mastercard",
+    },
   },
   {
     id: "mtn",
@@ -63,7 +90,13 @@ const GO_THROUGH: Scenario[] = [
     channel: "MTN_MOMO",
     kind: "momo",
     want: "SUCCESS",
-    body: { channel: "MTN_MOMO", amount_rwf: 100, ...customer, customer_phone: TEST_PHONE, description: "Lab MTN MoMo" },
+    body: {
+      channel: "MTN_MOMO",
+      amount_rwf: 100,
+      ...customer,
+      customer_phone: TEST_PHONE,
+      description: "Lab MTN MoMo",
+    },
   },
   {
     id: "airtel",
@@ -72,7 +105,13 @@ const GO_THROUGH: Scenario[] = [
     channel: "AIRTEL_MONEY",
     kind: "momo",
     want: "SUCCESS",
-    body: { channel: "AIRTEL_MONEY", amount_rwf: 100, ...customer, customer_phone: TEST_AIRTEL, description: "Lab Airtel Money" },
+    body: {
+      channel: "AIRTEL_MONEY",
+      amount_rwf: 100,
+      ...customer,
+      customer_phone: TEST_AIRTEL,
+      description: "Lab Airtel Money",
+    },
   },
 ];
 
@@ -85,7 +124,12 @@ const FAIL_PROPERLY: Scenario[] = [
     kind: "card",
     want: "FAILED",
     card: DECLINE_CARD,
-    body: { channel: "VISA", amount_rwf: 100, ...customer, description: "Lab declined card" },
+    body: {
+      channel: "VISA",
+      amount_rwf: 100,
+      ...customer,
+      description: "Lab declined card",
+    },
   },
   {
     id: "mtn-declined",
@@ -94,7 +138,13 @@ const FAIL_PROPERLY: Scenario[] = [
     channel: "MTN_MOMO",
     kind: "momo",
     want: "FAILED",
-    body: { channel: "MTN_MOMO", amount_rwf: 100, ...customer, customer_phone: DECLINE_PHONE, description: "Lab declined" },
+    body: {
+      channel: "MTN_MOMO",
+      amount_rwf: 100,
+      ...customer,
+      customer_phone: DECLINE_PHONE,
+      description: "Lab declined",
+    },
   },
   {
     id: "mtn-no-funds",
@@ -103,7 +153,13 @@ const FAIL_PROPERLY: Scenario[] = [
     channel: "MTN_MOMO",
     kind: "momo",
     want: "FAILED",
-    body: { channel: "MTN_MOMO", amount_rwf: 100, ...customer, customer_phone: NO_FUNDS_PHONE, description: "Lab no funds" },
+    body: {
+      channel: "MTN_MOMO",
+      amount_rwf: 100,
+      ...customer,
+      customer_phone: NO_FUNDS_PHONE,
+      description: "Lab no funds",
+    },
   },
 ];
 
@@ -114,7 +170,12 @@ const BLOCKED: Scenario[] = [
     what: "Wrong network - refused before anyone is asked to pay",
     channel: "MTN_MOMO",
     kind: "block",
-    body: { channel: "MTN_MOMO", amount_rwf: 100, ...customer, customer_phone: TEST_AIRTEL },
+    body: {
+      channel: "MTN_MOMO",
+      amount_rwf: 100,
+      ...customer,
+      customer_phone: TEST_AIRTEL,
+    },
   },
   {
     id: "mtn-on-airtel",
@@ -122,7 +183,12 @@ const BLOCKED: Scenario[] = [
     what: "Wrong network - refused before anyone is asked to pay",
     channel: "AIRTEL_MONEY",
     kind: "block",
-    body: { channel: "AIRTEL_MONEY", amount_rwf: 100, ...customer, customer_phone: TEST_PHONE },
+    body: {
+      channel: "AIRTEL_MONEY",
+      amount_rwf: 100,
+      ...customer,
+      customer_phone: TEST_PHONE,
+    },
   },
   {
     id: "no-phone",
@@ -146,7 +212,12 @@ const BLOCKED: Scenario[] = [
     what: "Email must be valid",
     channel: "MASTERCARD",
     kind: "block",
-    body: { channel: "MASTERCARD", amount_rwf: 100, customer_name: "Test Customer", customer_email: "not-an-email" },
+    body: {
+      channel: "MASTERCARD",
+      amount_rwf: 100,
+      customer_name: "Test Customer",
+      customer_email: "not-an-email",
+    },
   },
 ];
 
@@ -169,23 +240,47 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function errorText(call: RawCall): string {
   const d = call.body?.detail;
-  if (Array.isArray(d)) return d.map((x) => String(x?.msg ?? "").replace(/^Value error, /, "")).join(" ");
+  if (Array.isArray(d))
+    return d
+      .map((x) => String(x?.msg ?? "").replace(/^Value error, /, ""))
+      .join(" ");
   if (typeof d === "string") return d;
   return call.body?.error ?? `HTTP ${call.httpStatus ?? "no response"}`;
 }
 
-const finalWord = (s: string) => (s === "SUCCESS" ? "Paid" : s === "FAILED" ? "Failed" : s === "CANCELLED" ? "Cancelled" : s);
+const finalWord = (s: string) =>
+  s === "SUCCESS"
+    ? "Paid"
+    : s === "FAILED"
+      ? "Failed"
+      : s === "CANCELLED"
+        ? "Cancelled"
+        : s;
 
 /** Runs one test from start to finish, reporting each step as it happens. */
-async function runScenario(scope: PaymentScope, s: Scenario, report: (r: Omit<RunResult, "at">) => void): Promise<Omit<RunResult, "at">> {
+async function runScenario(
+  scope: PaymentScope,
+  s: Scenario,
+  report: (r: Omit<RunResult, "at">) => void,
+): Promise<Omit<RunResult, "at">> {
   const steps: Step[] = [];
   const calls: RunResult["calls"] = [];
   const ctx: { reference?: string } = {};
   const push = (text: string, ok: boolean | null) => {
     steps.push({ text, ok });
-    report({ passed: false, steps: [...steps], calls: [...calls], reference: ctx.reference });
+    report({
+      passed: false,
+      steps: [...steps],
+      calls: [...calls],
+      reference: ctx.reference,
+    });
   };
-  const done = (passed: boolean) => ({ passed, steps: [...steps], calls: [...calls], reference: ctx.reference });
+  const done = (passed: boolean) => ({
+    passed,
+    steps: [...steps],
+    calls: [...calls],
+    reference: ctx.reference,
+  });
 
   push("Sending the payment to Soila Pay…", null);
   const created = await paymentLab.create(scope, s.body);
@@ -193,8 +288,14 @@ async function runScenario(scope: PaymentScope, s: Scenario, report: (r: Omit<Ru
   steps.pop();
 
   if (s.kind === "block") {
-    const refused = !created.ok && (created.httpStatus === 400 || created.httpStatus === 422);
-    push(refused ? `Blocked, as it should be: ${errorText(created)}` : `Not blocked - Soila Pay accepted it (HTTP ${created.httpStatus})`, refused);
+    const refused =
+      !created.ok && (created.httpStatus === 400 || created.httpStatus === 422);
+    push(
+      refused
+        ? `Blocked, as it should be: ${errorText(created)}`
+        : `Not blocked - Soila Pay accepted it (HTTP ${created.httpStatus})`,
+      refused,
+    );
     return done(refused);
   }
   if (!created.ok) {
@@ -230,7 +331,8 @@ async function runScenario(scope: PaymentScope, s: Scenario, report: (r: Omit<Ru
       await sleep(1500);
       const got = await paymentLab.get(scope, ctx.reference!);
       if (got.ok) row = got.body;
-      if (i === 14 || row.status !== "PENDING") calls.push({ label: "Check status", call: got });
+      if (i === 14 || row.status !== "PENDING")
+        calls.push({ label: "Check status", call: got });
     }
     steps.pop();
     if (row.status === "PENDING") {
@@ -241,12 +343,21 @@ async function runScenario(scope: PaymentScope, s: Scenario, report: (r: Omit<Ru
   }
 
   const passed = row.status === s.want;
-  const why = row.status_message ? ` - ${String(row.status_message).replace(/^Sandbox: /, "")}` : "";
-  push(`Result: ${finalWord(row.status)}${why}${passed ? "" : ` (expected ${finalWord(s.want!)})`}`, passed);
+  const why = row.status_message
+    ? ` - ${String(row.status_message).replace(/^Sandbox: /, "")}`
+    : "";
+  push(
+    `Result: ${finalWord(row.status)}${why}${passed ? "" : ` (expected ${finalWord(s.want!)})`}`,
+    passed,
+  );
   return done(passed);
 }
 
-function curlFor(body: Record<string, unknown>, apiBase: string, integratorKey?: string) {
+function curlFor(
+  body: Record<string, unknown>,
+  apiBase: string,
+  integratorKey?: string,
+) {
   return [
     `curl -X POST ${apiBase.replace(/\/$/, "")}/api/v1/payments \\`,
     `  -H "Content-Type: application/json" \\`,
@@ -268,7 +379,8 @@ function CopyBtn({ text }: { text: string }) {
       }
       className="bk-btn bk-fill-paper min-h-7 px-2 py-0.5 text-[10px]"
     >
-      {done ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {done ? "Copied" : "Copy"}
+      {done ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{" "}
+      {done ? "Copied" : "Copy"}
     </button>
   );
 }
@@ -303,13 +415,31 @@ function ScenarioRow({
               <Loader2 className="h-3 w-3 animate-spin" /> Testing
             </span>
           ) : result ? (
-            <span className={cn("bk-tag", result.passed ? "bk-fill-green" : "bk-fill-red")}>
-              {result.passed ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} {result.passed ? "Works" : "Broken"}
+            <span
+              className={cn(
+                "bk-tag",
+                result.passed ? "bk-fill-green" : "bk-fill-red",
+              )}
+            >
+              {result.passed ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <X className="h-3 w-3" />
+              )}{" "}
+              {result.passed ? "Works" : "Broken"}
             </span>
           ) : (
             <span className="bk-tag bk-fill-paper">Not tested</span>
           )}
-          <button type="button" onClick={onRun} disabled={running} className={cn("bk-btn min-h-9 px-3 text-xs", channelFill(s.channel))}>
+          <button
+            type="button"
+            onClick={onRun}
+            disabled={running}
+            className={cn(
+              "bk-btn min-h-9 px-3 text-xs",
+              channelFill(s.channel),
+            )}
+          >
             <Play className="h-3.5 w-3.5" /> Test
           </button>
           <button
@@ -320,7 +450,12 @@ function ScenarioRow({
             title="Technical details (for developers)"
             className="bk-btn bk-fill-paper min-h-9 px-2"
           >
-            <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 transition-transform",
+                open && "rotate-180",
+              )}
+            />
           </button>
         </div>
       </div>
@@ -347,16 +482,27 @@ function ScenarioRow({
         <div className="grid gap-3 border-t-2 border-[var(--bk-ink)] p-3 lg:grid-cols-2">
           <div>
             <div className="mb-1 flex items-center justify-between">
-              <span className="bk-display text-xs font-bold uppercase">Same request from your code (cURL)</span>
+              <span className="bk-display text-xs font-bold uppercase">
+                Same request from your code (cURL)
+              </span>
               <CopyBtn text={curlFor(s.body, apiBase, integratorKey)} />
             </div>
-            <pre className="bk-code max-h-64">{curlFor(s.body, apiBase, integratorKey)}</pre>
+            <pre className="bk-code max-h-64">
+              {curlFor(s.body, apiBase, integratorKey)}
+            </pre>
           </div>
           <div>
-            <span className="bk-display mb-1 block text-xs font-bold uppercase">What Soila Pay answered</span>
+            <span className="bk-display mb-1 block text-xs font-bold uppercase">
+              What Soila Pay answered
+            </span>
             <pre className="bk-code max-h-64">
               {result?.calls.length
-                ? result.calls.map((c) => `// ${c.label} · HTTP ${c.call.httpStatus ?? "-"} · ${c.call.ms} ms\n${JSON.stringify(c.call.body, null, 2)}`).join("\n\n")
+                ? result.calls
+                    .map(
+                      (c) =>
+                        `// ${c.label} · HTTP ${c.call.httpStatus ?? "-"} · ${c.call.ms} ms\n${JSON.stringify(c.call.body, null, 2)}`,
+                    )
+                    .join("\n\n")
                 : "// Press TEST to see the answers"}
             </pre>
           </div>
@@ -385,6 +531,10 @@ export function TestLab({
   const [results, setResults] = React.useState<Record<string, RunResult>>({});
   const [running, setRunning] = React.useState<Set<string>>(new Set());
   const [busyAll, setBusyAll] = React.useState(false);
+  // Admin with Kitovu's test keys: MoMo goes to Kitovu's TEST gateway by default.
+  const [route, setRoute] = React.useState<"kitovu" | "sandbox">(
+    kitovuTest ? "kitovu" : "sandbox",
+  );
   const [ref, setRef] = React.useState("");
   const [lookup, setLookup] = React.useState<RawCall | null>(null);
   const [looking, setLooking] = React.useState(false);
@@ -395,8 +545,13 @@ export function TestLab({
   const run = React.useCallback(
     async (s: Scenario) => {
       setRunning((r) => new Set(r).add(s.id));
-      const out = await runScenario(scope, s, (partial) => setResults((r) => ({ ...r, [s.id]: { ...partial, at: "" } })));
-      setResults((r) => ({ ...r, [s.id]: { ...out, at: `Tested at ${new Date().toLocaleTimeString()}` } }));
+      const out = await runScenario(scope, s, (partial) =>
+        setResults((r) => ({ ...r, [s.id]: { ...partial, at: "" } })),
+      );
+      setResults((r) => ({
+        ...r,
+        [s.id]: { ...out, at: `Tested at ${new Date().toLocaleTimeString()}` },
+      }));
       setRunning((r) => {
         const next = new Set(r);
         next.delete(s.id);
@@ -408,7 +563,7 @@ export function TestLab({
       }
       return out.passed;
     },
-    [scope, onRan]
+    [scope, onRan],
   );
 
   async function runAll() {
@@ -418,8 +573,14 @@ export function TestLab({
     setBusyAll(false);
     const ok = outcomes.filter(Boolean).length;
     toast({
-      title: ok === ALL.length ? `All ${ALL.length} tests work` : `${ALL.length - ok} of ${ALL.length} tests are broken`,
-      description: ok === ALL.length ? "Payments work from start to finish." : "Open the red ones to see where it stopped.",
+      title:
+        ok === ALL.length
+          ? `All ${ALL.length} tests work`
+          : `${ALL.length - ok} of ${ALL.length} tests are broken`,
+      description:
+        ok === ALL.length
+          ? "Payments work from start to finish."
+          : "Open the red ones to see where it stopped.",
       variant: ok === ALL.length ? "success" : "error",
     });
   }
@@ -434,7 +595,9 @@ export function TestLab({
 
   const group = (title: string, list: Scenario[]) => (
     <>
-      <h3 className="bk-display mt-6 text-sm font-bold uppercase first:mt-4">{title}</h3>
+      <h3 className="bk-display mt-6 text-sm font-bold uppercase first:mt-4">
+        {title}
+      </h3>
       <ul className="mt-2 flex flex-col gap-3">
         {list.map((s) => (
           <ScenarioRow
@@ -454,88 +617,188 @@ export function TestLab({
   return (
     <div className="flex flex-col gap-6">
       <div className="bk-card bk-fill-yellow p-4 text-sm">
-        <p className="bk-display text-base font-bold">🧪 What is the Test Lab?</p>
+        <p className="bk-display text-base font-bold">
+          🧪 Test Lab - the real checkout, with test money
+        </p>
         <p className="mt-1">
-          A practice area that checks payments work <b>from start to finish</b>. Each test pretends to be a customer paying - by card, MTN or Airtel -
-          using Soila Pay&apos;s simulator. <b>Nobody is charged and no real money moves</b>, even when the account is live.
+          Works exactly like <b>Take a payment</b>: pick how they pay, enter the
+          amount, confirm, and follow it to the receipt.{" "}
+          <b>No real money moves.</b> Test payments show under <b>Test money</b>
+          .
         </p>
-        <p className="mt-2">
-          Press <b>Test everything</b> and wait about 20 seconds. <b>Works</b> (green) means that part is fine. <b>Broken</b> (red) shows the step
-          where it stopped. Test payments only appear under <b>Test money</b>.
-        </p>
-      </div>
-
-      {kitovuTest && <KitovuTestPanel onRan={onRan} />}
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-        <BkPanel
-          title="Payment tests"
-          tone="bk-fill-blue"
-          action={
-            <button type="button" onClick={runAll} disabled={busyAll} className="bk-btn bk-fill-ink min-h-9 px-3 text-xs">
-              {busyAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />} Test everything ({ALL.length})
-            </button>
-          }
-        >
-          {ran.length > 0 && (
-            <p className={cn("bk-box p-2 text-sm font-bold", passed === ran.length ? "bk-fill-green" : "bk-fill-red")}>
-              {passed}/{ran.length} work{passed === ran.length ? " ✓" : ` · ${ran.length - passed} broken`}
-            </p>
-          )}
-          {group("✅ Payments that should go through", GO_THROUGH)}
-          {group("↩️ Payments that should fail cleanly", FAIL_PROPERLY)}
-          {group("🛑 Mistakes Soila Pay must block", BLOCKED)}
-        </BkPanel>
-
-        <div className="flex flex-col gap-6">
-          <BkPanel title="Test numbers & cards" tone="bk-fill-pink">
-            <p className="bk-muted mb-3 text-xs">Use these with a sandbox key (or a Test Mode account) to test from your own code.</p>
-            <dl className="flex flex-col gap-3 text-sm">
-              {[
-                ["MTN - approves", TEST_PHONE],
-                ["Airtel - approves", TEST_AIRTEL],
-                ["Customer says no", DECLINE_PHONE],
-                ["Not enough money", NO_FUNDS_PHONE],
-                ["Card - approved", GOOD_CARD],
-                ["Card - declined", DECLINE_CARD],
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <dt className="bk-display text-xs font-bold uppercase">{label}</dt>
-                  <dd className="mt-0.5 flex items-center gap-2 font-mono font-bold">
-                    {value} <CopyBtn text={value} />
-                  </dd>
-                </div>
-              ))}
-              <div>
-                <dt className="bk-display text-xs font-bold uppercase">Timing</dt>
-                <dd>Phone payments answer after about 5 seconds, like a real customer.</dd>
-              </div>
-            </dl>
-          </BkPanel>
-
-          <BkPanel title="Check a reference" tone="bk-fill-green">
-            <form onSubmit={check} className="flex gap-2">
-              <label htmlFor="lab-ref" className="sr-only">
-                Payment reference
-              </label>
-              <input id="lab-ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="SP-20261108-…" className="bk-input font-mono text-sm" />
-              <button type="submit" disabled={looking || !ref.trim()} className="bk-btn bk-fill-ink px-3" aria-label="Check status">
-                {looking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+        {kitovuTest && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold uppercase">
+              Mobile money goes to:
+            </span>
+            {(
+              [
+                ["kitovu", "Kitovu test system (your own phone)"],
+                ["sandbox", "Simulator (test numbers)"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setRoute(id)}
+                aria-pressed={route === id}
+                className={cn(
+                  "bk-btn min-h-8 px-3 text-xs",
+                  route === id ? "bk-fill-ink" : "bk-fill-paper",
+                )}
+              >
+                {label}
               </button>
-            </form>
-            <p className="bk-muted mt-2 text-xs">Shows the latest status of any payment. The last test fills this in for you.</p>
-            {lookup && (
-              <div className="mt-3">
-                <div className="mb-2 flex items-center gap-2">
-                  {lookup.ok ? <StatusStamp status={lookup.body.status} /> : <span className="bk-tag bk-fill-red">HTTP {lookup.httpStatus ?? "-"}</span>}
-                  <span className="bk-muted text-xs">{lookup.ms} ms</span>
-                </div>
-                <pre className="bk-code max-h-72">{JSON.stringify(lookup.body, null, 2)}</pre>
-              </div>
-            )}
-          </BkPanel>
-        </div>
+            ))}
+          </div>
+        )}
+        <p className="bk-muted mt-2 text-xs">
+          {route === "kitovu"
+            ? "MTN / Airtel: Kitovu checks the name on your number, then sends the prompt to your phone - approve it to finish. Cards use the test card page (card 4242 4242 4242 4242)."
+            : "Use “Fill test details”. MoMo answers by itself after ~5 seconds (0780000002 = customer says no). Cards open the test card page (4242 4242 4242 4242 approves, 4000 0000 0000 0002 is declined)."}
+        </p>
       </div>
+
+      <CheckoutPanel
+        key={route}
+        scope={{ ...scope, test: route }}
+        testMode
+        airtelAvailable
+        onChange={() => onRan?.()}
+      />
+
+      <details className="bk-card">
+        <summary className="bk-display cursor-pointer px-4 py-3 text-sm font-bold uppercase">
+          Automatic checks &amp; payout test (for developers)
+        </summary>
+        <div className="flex flex-col gap-6 border-t-2 border-[var(--bk-ink)] p-4">
+          {kitovuTest && <KitovuTestPanel onRan={onRan} />}
+
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+            <BkPanel
+              title="Payment tests"
+              tone="bk-fill-blue"
+              action={
+                <button
+                  type="button"
+                  onClick={runAll}
+                  disabled={busyAll}
+                  className="bk-btn bk-fill-ink min-h-9 px-3 text-xs"
+                >
+                  {busyAll ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <PlayCircle className="h-4 w-4" />
+                  )}{" "}
+                  Test everything ({ALL.length})
+                </button>
+              }
+            >
+              {ran.length > 0 && (
+                <p
+                  className={cn(
+                    "bk-box p-2 text-sm font-bold",
+                    passed === ran.length ? "bk-fill-green" : "bk-fill-red",
+                  )}
+                >
+                  {passed}/{ran.length} work
+                  {passed === ran.length
+                    ? " ✓"
+                    : ` · ${ran.length - passed} broken`}
+                </p>
+              )}
+              {group("✅ Payments that should go through", GO_THROUGH)}
+              {group("↩️ Payments that should fail cleanly", FAIL_PROPERLY)}
+              {group("🛑 Mistakes Soila Pay must block", BLOCKED)}
+            </BkPanel>
+
+            <div className="flex flex-col gap-6">
+              <BkPanel title="Test numbers & cards" tone="bk-fill-pink">
+                <p className="bk-muted mb-3 text-xs">
+                  Use these with a sandbox key (or a Test Mode account) to test
+                  from your own code.
+                </p>
+                <dl className="flex flex-col gap-3 text-sm">
+                  {[
+                    ["MTN - approves", TEST_PHONE],
+                    ["Airtel - approves", TEST_AIRTEL],
+                    ["Customer says no", DECLINE_PHONE],
+                    ["Not enough money", NO_FUNDS_PHONE],
+                    ["Card - approved", GOOD_CARD],
+                    ["Card - declined", DECLINE_CARD],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="bk-display text-xs font-bold uppercase">
+                        {label}
+                      </dt>
+                      <dd className="mt-0.5 flex items-center gap-2 font-mono font-bold">
+                        {value} <CopyBtn text={value} />
+                      </dd>
+                    </div>
+                  ))}
+                  <div>
+                    <dt className="bk-display text-xs font-bold uppercase">
+                      Timing
+                    </dt>
+                    <dd>
+                      Phone payments answer after about 5 seconds, like a real
+                      customer.
+                    </dd>
+                  </div>
+                </dl>
+              </BkPanel>
+
+              <BkPanel title="Check a reference" tone="bk-fill-green">
+                <form onSubmit={check} className="flex gap-2">
+                  <label htmlFor="lab-ref" className="sr-only">
+                    Payment reference
+                  </label>
+                  <input
+                    id="lab-ref"
+                    value={ref}
+                    onChange={(e) => setRef(e.target.value)}
+                    placeholder="SP-20261108-…"
+                    className="bk-input font-mono text-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={looking || !ref.trim()}
+                    className="bk-btn bk-fill-ink px-3"
+                    aria-label="Check status"
+                  >
+                    {looking ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Search className="h-4 w-4" />
+                    )}
+                  </button>
+                </form>
+                <p className="bk-muted mt-2 text-xs">
+                  Shows the latest status of any payment. The last test fills
+                  this in for you.
+                </p>
+                {lookup && (
+                  <div className="mt-3">
+                    <div className="mb-2 flex items-center gap-2">
+                      {lookup.ok ? (
+                        <StatusStamp status={lookup.body.status} />
+                      ) : (
+                        <span className="bk-tag bk-fill-red">
+                          HTTP {lookup.httpStatus ?? "-"}
+                        </span>
+                      )}
+                      <span className="bk-muted text-xs">{lookup.ms} ms</span>
+                    </div>
+                    <pre className="bk-code max-h-72">
+                      {JSON.stringify(lookup.body, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </BkPanel>
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }
@@ -546,17 +809,24 @@ export function TestLab({
 function KitovuTestPanel({ onRan }: { onRan?: () => void }) {
   const [phone, setPhone] = React.useState("");
   const [amount, setAmount] = React.useState("100");
-  const [busy, setBusy] = React.useState<null | "lookup" | "collect" | "payout">(null);
+  const [busy, setBusy] = React.useState<
+    null | "lookup" | "collect" | "payout"
+  >(null);
   const [steps, setSteps] = React.useState<Step[]>([]);
   const [last, setLast] = React.useState<RawCall | null>(null);
-  const network = /^(\+?250|0)?7[23]/.test(phone.replace(/\s/g, "")) ? "AIRTEL_MONEY" : "MTN_MOMO";
+  const network = /^(\+?250|0)?7[23]/.test(phone.replace(/\s/g, ""))
+    ? "AIRTEL_MONEY"
+    : "MTN_MOMO";
   const amountNum = Number(amount) || 0;
   const ready = phone.replace(/\D/g, "").length >= 9 && amountNum >= 100;
 
   const say = (list: Step[]) => setSteps([...list]);
 
   async function follow(list: Step[], ref: string) {
-    list.push({ text: "Waiting for Kitovu (approve the prompt on your phone)…", ok: null });
+    list.push({
+      text: "Waiting for Kitovu (approve the prompt on your phone)…",
+      ok: null,
+    });
     say(list);
     let row: Record<string, unknown> | null = null;
     for (let i = 0; i < 40; i++) {
@@ -569,7 +839,11 @@ function KitovuTestPanel({ onRan }: { onRan?: () => void }) {
       }
     }
     list.pop();
-    if (!row) list.push({ text: "Still waiting after 2 minutes - check the reference later in Transactions (Test money)", ok: null });
+    if (!row)
+      list.push({
+        text: "Still waiting after 2 minutes - check the reference later in Transactions (Test money)",
+        ok: null,
+      });
     else
       list.push({
         text: `Kitovu says: ${finalWord(String(row.status))}${row.status_message ? ` - ${row.status_message}` : ""}`,
@@ -581,15 +855,30 @@ function KitovuTestPanel({ onRan }: { onRan?: () => void }) {
 
   async function lookup() {
     setBusy("lookup");
-    const list: Step[] = [{ text: "Asking Kitovu whose number this is…", ok: null }];
+    const list: Step[] = [
+      { text: "Asking Kitovu whose number this is…", ok: null },
+    ];
     say(list);
-    const r = await paymentLab.kitovuLookup({ channel: network, phone, amount_rwf: amountNum });
+    const r = await paymentLab.kitovuLookup({
+      channel: network,
+      phone,
+      amount_rwf: amountNum,
+    });
     setLast(r);
     list.pop();
-    if (!r.ok) list.push({ text: `Kitovu refused: ${errorText(r)}`, ok: false });
+    if (!r.ok)
+      list.push({ text: `Kitovu refused: ${errorText(r)}`, ok: false });
     else {
-      list.push({ text: r.body.verified ? `Registered name: ${r.body.account_name}` : "Kitovu could not confirm a name for this number", ok: !!r.body.verified });
-      list.push({ text: `Fee quote: customer pays ${r.body.total_to_pay_rwf} RWF`, ok: true });
+      list.push({
+        text: r.body.verified
+          ? `Registered name: ${r.body.account_name}`
+          : "Kitovu could not confirm a name for this number",
+        ok: !!r.body.verified,
+      });
+      list.push({
+        text: `Fee quote: customer pays ${r.body.total_to_pay_rwf} RWF`,
+        ok: true,
+      });
     }
     say(list);
     setBusy(null);
@@ -597,7 +886,9 @@ function KitovuTestPanel({ onRan }: { onRan?: () => void }) {
 
   async function collect() {
     setBusy("collect");
-    const list: Step[] = [{ text: "Sending a payment request to Kitovu…", ok: null }];
+    const list: Step[] = [
+      { text: "Sending a payment request to Kitovu…", ok: null },
+    ];
     say(list);
     const r = await paymentLab.kitovuCollect({
       channel: network,
@@ -616,7 +907,10 @@ function KitovuTestPanel({ onRan }: { onRan?: () => void }) {
       list.push({ text: `Sent to Kitovu · ${r.body.reference_id}`, ok: true });
       if (r.body.status === "PENDING") await follow(list, r.body.reference_id);
       else {
-        list.push({ text: `Kitovu says: ${finalWord(r.body.status)} - ${r.body.status_message ?? ""}`, ok: r.body.status === "SUCCESS" });
+        list.push({
+          text: `Kitovu says: ${finalWord(r.body.status)} - ${r.body.status_message ?? ""}`,
+          ok: r.body.status === "SUCCESS",
+        });
         say(list);
       }
     }
@@ -625,19 +919,32 @@ function KitovuTestPanel({ onRan }: { onRan?: () => void }) {
 
   async function payout() {
     setBusy("payout");
-    const list: Step[] = [{ text: "Asking Kitovu to send the money…", ok: null }];
+    const list: Step[] = [
+      { text: "Asking Kitovu to send the money…", ok: null },
+    ];
     say(list);
-    const r = await paymentLab.kitovuPayout({ amount_rwf: amountNum, recipient_name: "Kitovu Test", recipient_phone: phone, description: "Kitovu test payout" });
+    const r = await paymentLab.kitovuPayout({
+      amount_rwf: amountNum,
+      recipient_name: "Kitovu Test",
+      recipient_phone: phone,
+      description: "Kitovu test payout",
+    });
     setLast(r);
     list.pop();
     if (!r.ok) {
       list.push({ text: `Not sent: ${errorText(r)}`, ok: false });
       say(list);
     } else {
-      list.push({ text: `Payout sent to Kitovu · ${r.body.reference_id}`, ok: true });
+      list.push({
+        text: `Payout sent to Kitovu · ${r.body.reference_id}`,
+        ok: true,
+      });
       if (r.body.status === "PENDING") await follow(list, r.body.reference_id);
       else {
-        list.push({ text: `Kitovu says: ${finalWord(r.body.status)} - ${r.body.status_message ?? ""}`, ok: r.body.status === "SUCCESS" });
+        list.push({
+          text: `Kitovu says: ${finalWord(r.body.status)} - ${r.body.status_message ?? ""}`,
+          ok: r.body.status === "SUCCESS",
+        });
         say(list);
       }
     }
@@ -647,29 +954,73 @@ function KitovuTestPanel({ onRan }: { onRan?: () => void }) {
   return (
     <BkPanel title="Kitovu test gateway" tone="bk-fill-orange">
       <p className="text-sm">
-        Talks to <b>Kitovu Pay&apos;s test system</b> for real - not the simulator. Use <b>your own</b> MTN or Airtel number. It is saved as{" "}
+        Talks to <b>Kitovu Pay&apos;s test system</b> for real - not the
+        simulator. Use <b>your own</b> MTN or Airtel number. It is saved as{" "}
         <b>test money</b>, and real customers never go through it.
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs font-bold uppercase">
           Your phone
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="078… or 073…" inputMode="tel" className="bk-input w-44 font-mono text-sm normal-case" />
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="078… or 073…"
+            inputMode="tel"
+            className="bk-input w-44 font-mono text-sm normal-case"
+          />
         </label>
         <label className="flex flex-col gap-1 text-xs font-bold uppercase">
           Amount (RWF)
-          <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} inputMode="numeric" className="bk-input w-28 font-mono text-sm" />
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))}
+            inputMode="numeric"
+            className="bk-input w-28 font-mono text-sm"
+          />
         </label>
-        <span className="bk-tag bk-fill-paper">{network === "AIRTEL_MONEY" ? "Airtel" : "MTN"}</span>
+        <span className="bk-tag bk-fill-paper">
+          {network === "AIRTEL_MONEY" ? "Airtel" : "MTN"}
+        </span>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" disabled={!ready || busy !== null} onClick={lookup} className="bk-btn bk-fill-paper min-h-9 px-3 text-xs">
-          {busy === "lookup" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} 1. Check the name
+        <button
+          type="button"
+          disabled={!ready || busy !== null}
+          onClick={lookup}
+          className="bk-btn bk-fill-paper min-h-9 px-3 text-xs"
+        >
+          {busy === "lookup" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Search className="h-4 w-4" />
+          )}{" "}
+          1. Check the name
         </button>
-        <button type="button" disabled={!ready || busy !== null} onClick={collect} className="bk-btn bk-fill-green min-h-9 px-3 text-xs">
-          {busy === "collect" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} 2. Receive a payment
+        <button
+          type="button"
+          disabled={!ready || busy !== null}
+          onClick={collect}
+          className="bk-btn bk-fill-green min-h-9 px-3 text-xs"
+        >
+          {busy === "collect" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Play className="h-4 w-4" />
+          )}{" "}
+          2. Receive a payment
         </button>
-        <button type="button" disabled={!ready || busy !== null} onClick={payout} className="bk-btn bk-fill-blue min-h-9 px-3 text-xs">
-          {busy === "payout" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} 3. Send a payout
+        <button
+          type="button"
+          disabled={!ready || busy !== null}
+          onClick={payout}
+          className="bk-btn bk-fill-blue min-h-9 px-3 text-xs"
+        >
+          {busy === "payout" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Play className="h-4 w-4" />
+          )}{" "}
+          3. Send a payout
         </button>
       </div>
       {steps.length > 0 && (
@@ -690,7 +1041,9 @@ function KitovuTestPanel({ onRan }: { onRan?: () => void }) {
       )}
       {last && (
         <details className="mt-2 text-xs">
-          <summary className="cursor-pointer font-bold">What Kitovu / Soila Pay answered (for developers)</summary>
+          <summary className="cursor-pointer font-bold">
+            What Kitovu / Soila Pay answered (for developers)
+          </summary>
           <pre className="bk-code mt-1 max-h-64">{`HTTP ${last.httpStatus ?? "-"} · ${last.ms} ms\n${JSON.stringify(last.body, null, 2)}`}</pre>
         </details>
       )}

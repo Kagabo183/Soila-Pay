@@ -190,7 +190,16 @@ export interface PaginatedPayments {
 
 /** Who is making the call: the admin console (its token is attached by the
  * shared axios interceptor) or a logged-in integrator (portal session). */
-export type PaymentScope = { kind: "admin" } | { kind: "portal"; token: string };
+/** `test`: the Test Lab - "sandbox" = Soila Pay's simulator, "kitovu" = MoMo
+ * on Kitovu's TEST gateway (admin only; cards still use the simulator). */
+export type PaymentTestRun = "sandbox" | "kitovu";
+export type PaymentScope = ({ kind: "admin" } | { kind: "portal"; token: string }) & { test?: PaymentTestRun };
+
+function testParams(scope: PaymentScope, momo: boolean): Record<string, boolean> | undefined {
+  if (!scope.test) return undefined;
+  if (scope.test === "kitovu" && scope.kind === "admin" && momo) return { kitovu_test: true };
+  return { sandbox: true };
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function fromApi(row: any): Payment {
@@ -281,7 +290,7 @@ export const paymentService = {
     const { data } = await apiClient.post(
       `${base(scope)}/momo-lookup`,
       { channel: p.channel, phone: p.phone, amount_rwf: p.amountRwf },
-      { headers: headers(scope), timeout: 30000 }
+      { headers: headers(scope), params: testParams(scope, true), timeout: 30000 }
     );
     return {
       phone: data.phone,
@@ -299,7 +308,11 @@ export const paymentService = {
       base(scope),
       toApiBody(payload),
       // MoMo can take a while at the gateway; the backend caps it at ~20s.
-      { headers: headers(scope), timeout: 45000 }
+      {
+        headers: headers(scope),
+        params: testParams(scope, payload.channel === "MTN_MOMO" || payload.channel === "AIRTEL_MONEY"),
+        timeout: 45000,
+      }
     );
     return fromApi(data);
   },

@@ -582,8 +582,10 @@ async def portal_overview(
 
 
 @portal_router.post("/momo-lookup", response_model=MomoLookupOut)
-async def portal_momo_lookup(body: MomoLookupRequest, request: Request, integrator: dict = Depends(_current_integrator)):
-    return await _service(request).momo_lookup(body.phone, body.amount_rwf, integrator)
+async def portal_momo_lookup(
+    body: MomoLookupRequest, request: Request, sandbox: bool = Query(False), integrator: dict = Depends(_current_integrator)
+):
+    return await _service(request).momo_lookup(body.phone, body.amount_rwf, integrator, sandbox_only=sandbox)
 
 
 @portal_router.get("/{reference_id}", response_model=PaymentOut)
@@ -715,9 +717,13 @@ async def admin_import(body: ImportRequest, request: Request):
 
 
 @admin_router.post("/momo-lookup", response_model=MomoLookupOut)
-async def admin_momo_lookup(body: MomoLookupRequest, request: Request, kitovu_test: bool = Query(False)):
+async def admin_momo_lookup(
+    body: MomoLookupRequest, request: Request, kitovu_test: bool = Query(False), sandbox: bool = Query(False)
+):
     try:
-        return await _service(request).momo_lookup(body.phone, body.amount_rwf, None, kitovu_test=kitovu_test)
+        return await _service(request).momo_lookup(
+            body.phone, body.amount_rwf, None, kitovu_test=kitovu_test, sandbox_only=sandbox
+        )
     except ChannelUnavailableError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

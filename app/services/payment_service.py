@@ -245,7 +245,9 @@ class PaymentService:
                 return candidate
         raise KitovuError("Could not allocate a Kitovu reference - try again")
 
-    async def momo_lookup(self, phone: str, amount_rwf: int, integrator: Optional[dict], *, kitovu_test: bool = False) -> dict:
+    async def momo_lookup(
+        self, phone: str, amount_rwf: int, integrator: Optional[dict], *, kitovu_test: bool = False, sandbox_only: bool = False
+    ) -> dict:
         """Confirm step before a MoMo charge: the wallet's registered name and
         the fee, like Kitovu's own "New Collection" screen. Never fails the
         checkout - if a lookup can't be done, verified is False."""
@@ -253,7 +255,7 @@ class PaymentService:
                "customer_fee_rwf": 0.0, "total_to_pay_rwf": float(amount_rwf), "gateway": "LMBTECH"}
         if kitovu_test and not self.kitovu_test_available:
             raise ChannelUnavailableError("Kitovu test is not set up - add KITOVUPAY_TEST_API_KEY / KITOVUPAY_TEST_API_SECRET")
-        if not kitovu_test and self.is_sandbox(integrator):
+        if not kitovu_test and (sandbox_only or self.is_sandbox(integrator)):
             return {**out, "account_name": "Test Customer", "verified": True, "gateway": sandbox.GATEWAY}
         if not kitovu_test and not self.momo_via_kitovu:
             return out  # LMBTech has no number lookup
