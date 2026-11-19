@@ -27,7 +27,8 @@ from pydantic import BaseModel, Field
 
 from app.api.v1.deps import require_admin
 from app.api.v1.integrator_portal import _current_integrator
-from app.services import kitovu_client
+from app.db import payment_repo as payment_repo_module
+from app.services import kitovu_client, origin
 from app.schemas.payment import (
     CashoutRequest,
     DisbursementCreate,
@@ -108,6 +109,9 @@ def payment_out(row: dict, *, admin: bool = False) -> PaymentOut:
         description=row["description"],
         gateway=row["gateway"],
         gateway_transaction_id=row.get("gateway_transaction_id"),
+        source=row.get("source"),
+        actor=row.get("actor"),
+        client_ip=row.get("client_ip") if admin else None,
         redirect_url=row.get("redirect_url") if row["status"] == "PENDING" else None,
         is_test=bool(row["is_test"]),
         integrator_id=row.get("integrator_id"),
@@ -123,6 +127,26 @@ def _service(request: Request) -> PaymentService:
 
 # ---------------------------------------------------------------- shared logic
 
+def _mark_origin(request: Request, integrator: Optional[dict], *, admin: bool = False, source: Optional[str] = None) -> None:
+    """Record how this request started a transaction, who did it and from
+    which IP (stored on the row by PaymentRepo.create)."""
+    if source is None:
+        if admin or integrator is None:
+            source = origin.CONSOLE
+        elif integrator.get("key_mode") in ("sandbox", "production"):
+            source = origin.API
+        else:
+            source = origin.PORTAL
+    if admin or integrator is None:
+        who = getattr(request.app.state.settings, "admin_username", "") or "admin"
+        actor = f"Admin ({who})"
+    else:
+        key = integrator.get("key_mode")
+        actor = f"{integrator.get('name') or 'Integrator'}" + (f" · {key} key" if key else " · portal")
+    ip = _canonical_ip(request.client.host) if request.client else None
+    origin.set_origin(source, actor, ip)
+
+
 async def _create(
     request: Request,
     body: PaymentCreate,
@@ -136,6 +160,7 @@ async def _create(
     # Sandbox is simulated by Soila Pay and works without LMBTech.
     if not service.gateway_configured and not (sandbox_only or kitovu_test) and not service.is_sandbox(integrator):
         raise HTTPException(status_code=503, detail="Payments are not set up yet - add the LMBTech keys in .env")
+    _mark_origin(request, integrator, admin=admin, source=origin.TEST_LAB if (sandbox_only or kitovu_test) else None)
     try:
         row = await service.create(body, integrator, sandbox_only=sandbox_only, kitovu_test=kitovu_test)
     except DuplicateReferenceError as exc:
@@ -154,6 +179,7 @@ async def _create_disbursement(
             status_code=503,
             detail="Payouts are not set up yet - add LMBTECH_ACCOUNT_EMAIL (and the LMBTech keys) in .env",
         )
+    _mark_origin(request, integrator, admin=admin, source=origin.TEST_LAB if kitovu_test else None)
     try:
         row = await service.create_disbursement(body, integrator, kitovu_test=kitovu_test)
     except DuplicateReferenceError as exc:
@@ -564,6 +590,7 @@ async def portal_cashout(body: CashoutRequest, request: Request, integrator: dic
     service = _service(request)
     if body.destination == "MOMO" and not service.payouts_configured and not service.is_sandbox(integrator):
         raise HTTPException(status_code=503, detail="MoMo cash-outs are not available yet")
+    _mark_origin(request, integrator)
     try:
         row = await service.cashout(integrator, body.destination, body.amount_rwf)
     except CashoutSetupError as exc:
@@ -704,6 +731,7 @@ async def admin_reconcile(request: Request, days: int = Query(default=30, ge=1, 
 async def admin_import(body: ImportRequest, request: Request):
     """Add a transaction that exists only at LMBTech (made outside Soila Pay),
     so both sides match. LMBTech must know the reference."""
+    _mark_origin(request, None, admin=True, source=origin.IMPORT)
     try:
         row = await _service(request).import_from_gateway(
             body.reference_id.strip(), body.amount_rwf, body.channel, body.description,
@@ -759,3 +787,68 @@ async def admin_create_disbursement(body: DisbursementCreate, request: Request, 
     the gateway refuses if the account balance is too low). kitovu_test: send
     it on Kitovu's TEST gateway instead (test money)."""
     return await _create_disbursement(request, body, None, admin=True, kitovu_test=kitovu_test)
+
+
+# ---------------------------------------------------------------- Admin reconciliation
+
+def _num_dict(row: dict) -> dict:
+    out = {}
+    for k, v in row.items():
+        if isinstance(v, Decimal):
+            out[k] = float(v)
+        elif isinstance(v, (date,)) or hasattr(v, "isoformat"):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+@admin_router.get("/reconciliation/report")
+async def admin_reconciliation_report(
+    request: Request,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    mode: ViewMode = None,
+):
+    """Everything an admin needs to reconcile one ledger (live or test) for a
+    period: totals; per gateway (aggregator), per method, per gateway+method,
+    per source (API / portal / console / Test Lab / import), per integrator
+    and per day; what each integrator is owed right now; and the
+    transactions that need a look."""
+    is_test = _view_is_test(request, None, mode)
+    data = await payment_repo_module.reconciliation(
+        request.app.state.db_pool, date_from=date_from, date_to=date_to, is_test=is_test
+    )
+    report = {k: ([_num_dict(r) for r in v] if isinstance(v, list) else _num_dict(v)) for k, v in data.items()}
+    for b in report["balances"]:
+        b["balance"] = round(b["earned_net"] - b["spent"] - b["reserved"], 2)
+    report["owed_to_integrators"] = round(sum(max(b["balance"], 0) for b in report["balances"]), 2)
+    report["reserved_for_payouts"] = round(sum(b["reserved"] for b in report["balances"]), 2)
+    report["is_test"] = is_test
+    report["date_from"] = date_from.isoformat() if date_from else None
+    report["date_to"] = date_to.isoformat() if date_to else None
+    return report
+
+
+@admin_router.post("/integrators/{integrator_id}/cashout", response_model=PaymentOut, status_code=201)
+async def admin_pay_integrator(integrator_id: int, body: CashoutRequest, request: Request):
+    """Pay an integrator what they are owed, on their behalf: the same
+    cash-out they could do themselves (to their MoMo number, or a bank
+    transfer request), so their balance goes down and the books still match.
+    Recorded as started from the console by the admin."""
+    integrator = await request.app.state.integrator_repo.get_by_id(integrator_id)
+    if integrator is None:
+        raise HTTPException(status_code=404, detail="Integrator not found")
+    service = _service(request)
+    if body.destination == "MOMO" and not service.payouts_configured and not service.is_sandbox(integrator):
+        raise HTTPException(status_code=503, detail="MoMo payouts are not available yet")
+    _mark_origin(request, None, admin=True)
+    o = origin.current()
+    origin.set_origin(origin.CONSOLE, f"{o.get('actor')} for {integrator.get('name')}", o.get("client_ip"))
+    try:
+        row = await service.cashout(integrator, body.destination, body.amount_rwf)
+    except CashoutSetupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except InsufficientBalanceError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+    return payment_out(row, admin=True)

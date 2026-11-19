@@ -131,6 +131,11 @@ class PaymentOut(BaseModel):
     description: str
     gateway: str
     gateway_transaction_id: Optional[str] = None
+    # How it was started (API / PORTAL / CONSOLE / TEST_LAB / IMPORT / UNKNOWN)
+    # and by whom. client_ip is admin only.
+    source: Optional[str] = None
+    actor: Optional[str] = None
+    client_ip: Optional[str] = None
     # CARD + PENDING: send the customer here to enter card details.
     redirect_url: Optional[str] = None
     is_test: bool

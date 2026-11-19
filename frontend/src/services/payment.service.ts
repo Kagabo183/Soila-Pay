@@ -37,6 +37,12 @@ export interface Payment {
   description: string;
   /** Who moved the money: LMBTECH (cards), KITOVU (mobile money), SANDBOX, MANUAL. */
   gateway: string;
+  /** How it was started: API / PORTAL / CONSOLE / TEST_LAB / IMPORT / UNKNOWN. */
+  source: string | null;
+  /** Who started it (integrator + key type, or the admin). */
+  actor: string | null;
+  /** Admin only: the IP address it was started from. */
+  clientIp: string | null;
   gatewayTransactionId: string | null;
   redirectUrl: string | null;
   isTest: boolean;
@@ -225,6 +231,9 @@ function fromApi(row: any): Payment {
     customerPhone: row.customer_phone,
     description: row.description,
     gateway: row.gateway ?? "",
+    source: row.source ?? null,
+    actor: row.actor ?? null,
+    clientIp: row.client_ip ?? null,
     gatewayTransactionId: row.gateway_transaction_id,
     redirectUrl: row.redirect_url,
     isTest: row.is_test,

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, BookOpen, Users, Send, Zap, Receipt, ChevronsLeft, ChevronsRight, CreditCard } from "lucide-react";
+import { LayoutDashboard, BookOpen, Users, Send, Zap, Receipt, ChevronsLeft, ChevronsRight, CreditCard, Scale } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,7 @@ const NAV_SECTIONS = [
       { href: "/payments", label: "Collections", icon: CreditCard },
       { href: "/disbursements", label: "Disbursements", icon: Send },
       { href: "/transactions", label: "Transactions", icon: Receipt },
+      { href: "/reconciliation", label: "Reconciliation", icon: Scale },
     ],
   },
   {

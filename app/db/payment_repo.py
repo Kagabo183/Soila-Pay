@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Optional
 
 import aiomysql
 
+from app.services import origin
+
 if TYPE_CHECKING:  # avoid an import cycle with the service module
     from app.services.payment_service import PaymentMoney
 
@@ -84,6 +86,8 @@ class PaymentRepo:
         gateway: str = "LMBTECH",
         gateway_external_id: Optional[str] = None,
     ) -> dict:
+        # Who/how/where, set by the API route for this request (see app/services/origin.py).
+        o = origin.current()
         async with self._pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(
@@ -92,14 +96,16 @@ class PaymentRepo:
                         (reference_id, gateway, gateway_external_id, direction, is_cashout, integrator_id, method, channel, amount_rwf,
                          fee_percentage, fee_amount_rwf, gateway_cost_percentage,
                          gateway_cost_amount_rwf, margin_amount_rwf, customer_name,
-                         customer_email, customer_phone, description, return_url, is_test, imported)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         customer_email, customer_phone, description, return_url, is_test, imported,
+                         source, actor, client_ip)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         reference_id, gateway, gateway_external_id, direction, int(is_cashout), integrator_id, method, channel, amount_rwf,
                         money.fee_percentage, money.fee_amount_rwf, money.gateway_cost_percentage,
                         money.gateway_cost_amount_rwf, money.margin_amount_rwf, customer_name,
                         customer_email, customer_phone, description, return_url, int(is_test), int(imported),
+                        o.get("source") or (origin.IMPORT if imported else None), o.get("actor"), o.get("client_ip"),
                     ),
                 )
                 await conn.commit()
@@ -521,3 +527,98 @@ class PaymentRepo:
                 changed = cur.rowcount > 0
                 await conn.commit()
         return status if changed else None
+
+
+# -- Admin reconciliation ------------------------------------------------------
+
+# One set of money columns, reused for every breakdown. Money columns count
+# SUCCESS only (what really moved); pending/failed are counted separately.
+_RECON_COLUMNS = """
+  COUNT(*) AS total_count,
+  COALESCE(SUM(p.direction='COLLECTION' AND p.status='SUCCESS'), 0) AS in_count,
+  COALESCE(SUM(CASE WHEN p.direction='COLLECTION' AND p.status='SUCCESS' THEN p.amount_rwf END), 0) AS in_amount,
+  COALESCE(SUM(p.direction='DISBURSEMENT' AND p.is_cashout=0 AND p.status='SUCCESS'), 0) AS out_count,
+  COALESCE(SUM(CASE WHEN p.direction='DISBURSEMENT' AND p.is_cashout=0 AND p.status='SUCCESS' THEN p.amount_rwf END), 0) AS out_amount,
+  COALESCE(SUM(p.direction='DISBURSEMENT' AND p.is_cashout=1 AND p.status='SUCCESS'), 0) AS cashout_count,
+  COALESCE(SUM(CASE WHEN p.direction='DISBURSEMENT' AND p.is_cashout=1 AND p.status='SUCCESS' THEN p.amount_rwf END), 0) AS cashout_amount,
+  COALESCE(SUM(CASE WHEN p.status='SUCCESS' THEN p.fee_amount_rwf END), 0) AS fees,
+  COALESCE(SUM(CASE WHEN p.status='SUCCESS' THEN p.gateway_cost_amount_rwf END), 0) AS gateway_cost,
+  COALESCE(SUM(CASE WHEN p.status='SUCCESS' THEN p.margin_amount_rwf END), 0) AS margin,
+  COALESCE(SUM(p.status='PENDING'), 0) AS pending_count,
+  COALESCE(SUM(CASE WHEN p.status='PENDING' THEN p.amount_rwf END), 0) AS pending_amount,
+  COALESCE(SUM(p.status IN ('FAILED','CANCELLED')), 0) AS failed_count,
+  COALESCE(SUM(CASE WHEN p.status IN ('FAILED','CANCELLED') THEN p.amount_rwf END), 0) AS failed_amount
+"""
+
+_BREAKDOWNS = {
+    # key -> (SELECT label columns, GROUP BY, ORDER BY)
+    "by_gateway": ("p.gateway AS gateway", "p.gateway", "in_amount + out_amount + cashout_amount DESC"),
+    "by_channel": ("p.direction AS direction, p.method AS method, p.channel AS channel",
+                   "p.direction, p.method, p.channel", "in_amount + out_amount + cashout_amount DESC"),
+    "by_route": ("p.gateway AS gateway, p.direction AS direction, p.channel AS channel",
+                 "p.gateway, p.direction, p.channel", "in_amount + out_amount + cashout_amount DESC"),
+    "by_source": ("COALESCE(p.source, 'UNKNOWN') AS source", "COALESCE(p.source, 'UNKNOWN')", "total_count DESC"),
+    "by_integrator": ("p.integrator_id AS integrator_id, COALESCE(i.name, 'Soila Pay console') AS integrator_name",
+                      "p.integrator_id, i.name", "in_amount DESC"),
+    "by_day": ("DATE(p.created_at) AS day", "DATE(p.created_at)", "day DESC"),
+}
+
+
+async def _rows(cur, sql: str, args) -> list[dict]:
+    await cur.execute(sql, args)
+    return list(await cur.fetchall())
+
+
+async def reconciliation(pool, *, date_from: Optional[date], date_to: Optional[date], is_test: bool) -> dict:
+    """Every way to slice the money for one ledger (live or test) and period:
+    totals, per gateway, per method, per gateway+method, per source, per
+    integrator (with what each is owed right now, all time), per day, and the
+    transactions that need a look."""
+    where, args = _where(date_from=date_from, date_to=date_to, is_test=is_test)
+    base = f"FROM payments p LEFT JOIN integrators i ON i.id = p.integrator_id {where}"
+    out: dict = {}
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            out["totals"] = (await _rows(cur, f"SELECT {_RECON_COLUMNS} {base}", args))[0]
+            for key, (labels, group, order) in _BREAKDOWNS.items():
+                out[key] = await _rows(cur, f"SELECT {labels}, {_RECON_COLUMNS} {base} GROUP BY {group} ORDER BY {order}", args)
+
+            # What each integrator can still withdraw NOW (all time, this ledger) -
+            # the same formula as integrator_balance - and what is reserved by
+            # pending payouts / bank cash-outs.
+            out["balances"] = await _rows(cur, """
+                SELECT i.id AS integrator_id, i.name AS integrator_name, i.account_mode,
+                  COALESCE(SUM(CASE WHEN p.direction='COLLECTION' AND p.status='SUCCESS'
+                                    THEN p.amount_rwf - COALESCE(p.fee_amount_rwf, 0) END), 0) AS earned_net,
+                  COALESCE(SUM(CASE WHEN p.direction='DISBURSEMENT' AND p.status='SUCCESS'
+                                    THEN p.amount_rwf + COALESCE(p.fee_amount_rwf, 0) END), 0) AS spent,
+                  COALESCE(SUM(CASE WHEN p.direction='DISBURSEMENT' AND p.status='PENDING'
+                                    THEN p.amount_rwf + COALESCE(p.fee_amount_rwf, 0) END), 0) AS reserved,
+                  MAX(p.created_at) AS last_activity
+                FROM integrators i
+                LEFT JOIN payments p ON p.integrator_id = i.id AND p.is_test = %s
+                GROUP BY i.id, i.name, i.account_mode
+                HAVING earned_net > 0 OR spent > 0 OR reserved > 0
+                ORDER BY earned_net - spent - reserved DESC
+                """, (int(is_test),))
+
+            # Needs a look: stuck, corrected by a gateway check, added by hand,
+            # or sold below cost.
+            out["attention"] = await _rows(cur, f"""
+                SELECT p.reference_id, p.created_at, p.direction, p.is_cashout, p.status, p.status_message,
+                       p.gateway, p.channel, p.amount_rwf, p.margin_amount_rwf, p.corrected_from, p.imported,
+                       COALESCE(i.name, 'Soila Pay console') AS integrator_name, COALESCE(p.source, 'UNKNOWN') AS source,
+                       CASE
+                         WHEN p.status = 'PENDING' AND p.created_at < NOW() - INTERVAL 30 MINUTE THEN 'STUCK'
+                         WHEN p.corrected_from IS NOT NULL THEN 'CORRECTED'
+                         WHEN p.imported = 1 THEN 'IMPORTED'
+                         ELSE 'BELOW_COST'
+                       END AS reason
+                {base} {"AND" if where else "WHERE"} (
+                   (p.status = 'PENDING' AND p.created_at < NOW() - INTERVAL 30 MINUTE)
+                   OR p.corrected_from IS NOT NULL
+                   OR p.imported = 1
+                   OR (p.status = 'SUCCESS' AND p.margin_amount_rwf < 0))
+                ORDER BY p.created_at DESC LIMIT 200
+                """, args)
+    return out

@@ -75,6 +75,26 @@ function netOf(r: Payment) {
  * console and the integrator portal (LMBTech's "Payments" table). Admins
  * also see LMBTech's cost, the margin, the integrator, and can settle bank
  * cash-outs from the details panel. */
+/** How a transaction was started, in words. */
+function sourceLabel(source: string | null): string {
+  switch (source) {
+    case "API":
+      return "API (integrator's system)";
+    case "PORTAL":
+      return "Integrator portal";
+    case "CONSOLE":
+      return "Admin console";
+    case "TEST_LAB":
+      return "Test Lab";
+    case "IMPORT":
+      return "Imported from a gateway";
+    case "UNKNOWN":
+      return "Integrator (before tracking)";
+    default:
+      return "—";
+  }
+}
+
 export function Ledger({
   scope,
   refreshKey = 0,
@@ -174,14 +194,18 @@ export function Ledger({
       }
       const header = [
         "date", "type", "status", "name", "phone", "method", "amount_rwf", "fee_rwf", "net_rwf",
-        ...(admin ? ["lmbtech_cost_rwf", "margin_rwf", "integrator", "lmbtech_reported_amount_rwf", "corrected", "imported"] : []),
+        ...(admin
+          ? ["gateway", "gateway_cost_rwf", "margin_rwf", "integrator", "gateway_reported_amount_rwf", "corrected", "imported", "started_from", "started_by", "ip"]
+          : []),
         "reference", "transaction_id", "note",
       ];
       const lines = all.map((r) =>
         [
           r.createdAt, r.isCashout ? "CASHOUT" : r.direction, r.status, r.customerName, r.customerPhone, channelLabel(r.channel),
           r.amountRwf, r.feeAmountRwf, netOf(r),
-          ...(admin ? [r.gatewayCostAmountRwf, r.marginAmountRwf, r.integratorName ?? "Console", r.gatewayAmountRwf, r.reconciled, r.imported] : []),
+          ...(admin
+            ? [gatewayLabel(r.gateway), r.gatewayCostAmountRwf, r.marginAmountRwf, r.integratorName ?? "Console", r.gatewayAmountRwf, r.reconciled, r.imported, sourceLabel(r.source), r.actor, r.clientIp]
+            : []),
           r.referenceId, r.gatewayTransactionId, r.statusMessage,
         ].map(csvCell).join(",")
       );
@@ -454,6 +478,9 @@ function TransactionDetail({
           ["Margin", p.marginAmountRwf === null ? "—" : rwf(p.marginAmountRwf)],
           [`${gatewayLabel(p.gateway)} reported`, p.gatewayAmountRwf === null ? "—" : rwf(p.gatewayAmountRwf)],
           ["Integrator", p.integratorName ?? "Console"],
+          ["Started from", sourceLabel(p.source)],
+          ["Started by", p.actor ?? "—"],
+          ["IP address", p.clientIp ? <span key="ip" className="font-mono text-xs">{p.clientIp}</span> : "—"],
         ] as [string, React.ReactNode][])
       : []),
     ["Transaction ID", p.gatewayTransactionId ? <span key="g" className="font-mono text-xs">{p.gatewayTransactionId}<CopyText text={p.gatewayTransactionId} /></span> : "—"],
